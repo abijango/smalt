@@ -1,0 +1,16 @@
+build/
+build-*/
+out/
+*.o
+*.so
+*.a
+KoboRoot.tgz
+.DS_Store
+.idea/
+.vscode/
+*.swp
+compile_commands.json
+toolchains/cache/
+# Never commit real credentials
+config.ini
+*.key
