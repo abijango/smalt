@@ -25,6 +25,10 @@ A NickelHook mod for Kobo e-readers that runs inside Nickel (Kobo's reading app)
 7. **Follow the visual design exactly** for anything in `src/ui/`: colours, rules and component behaviour are in `docs/SPEC.md` under "Visual design". Screenshots are in `docs/mockups/`.
 8. **Never open Kobalt's database while Kobalt has it open.** Read `kobalt.sqlite` only after a book closes, from a copy, read-only. Never write it.
 
+## How the build runs
+
+Each wave runs in one cloud session that acts as orchestrator (see `docs/KICKOFF.md`): it starts one subagent per task brief, on the model `docs/KICKOFF.md` names, then integrates, tests and opens one pull request for the wave. Never merge, force-push, change CI, or edit `docs/SPEC.md` or this file without the maintainer's go-ahead. If something you need is missing (a toolchain download, a file, an endpoint detail), say exactly what is missing and stop; don't mock around it or guess.
+
 ## Repo layout
 
 Created by task 00 (scaffold). Each later task owns one area.

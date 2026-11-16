@@ -12,25 +12,6 @@ Each file here is a brief for one Claude Code cloud session. Sessions in the sam
 | 3 | `30-home-takeover`, `31-jump-prompt`, `32-highlights`, `33-collections-status-removals` | Yes | Wave 2 merged and tested on the device |
 | 3b | `34-migration` | No | Wave 3 working on the device |
 
-## Prompt to give each session
+## Running a wave
 
-```
-Implement docs/tasks/<file>.md. Read CLAUDE.md, docs/SPEC.md and docs/VERIFY.md first.
-Only edit the folders the brief says you own. Open a pull request when done.
-```
-
-## Between waves
-
-1. Review and merge the wave's PRs.
-2. Run `./build-kobo.sh`, copy `out/KoboRoot.tgz` to `.kobo/` on the Kobo, and test.
-3. Write anything you find into the next wave's briefs before starting it.
-
-## Starting sessions
-
-**Claude Code desktop app:** open the Code tab, start a new session, pick your Smalt cloud environment under Cloud in the environment picker, choose the `smalt` repo, and paste the prompt above with the task file name. Start one session per task in the wave; they run in parallel in the sidebar.
-
-**Terminal:** from the repo folder, one command per task:
-
-```bash
-claude --cloud "Implement docs/tasks/10-ledger.md. Read CLAUDE.md, docs/SPEC.md and docs/VERIFY.md first. Only edit the folders the brief says you own. Open a pull request when done."
-```
+See `docs/KICKOFF.md`: one orchestrator cloud session per wave, which runs the wave's tasks as parallel subagents on the right models.

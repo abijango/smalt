@@ -1,58 +1,69 @@
-# Kicking off the build with a Claude Code project
+# Kicking off the build in Claude Code cloud sessions
 
-## Models per task
+One cloud session per wave. That session is the **orchestrator**: it runs the wave's tasks as parallel subagents, each on the model below, then integrates, tests and opens one pull request for the wave. You merge and test on the Kobo between waves.
 
-Set **Project settings > General**: Thread model **Sonnet 5.5**, high effort. Coordinator model **Opus 5.5**, low effort. Tasks marked Opus below ask for it explicitly.
+## Models
 
-| Task | Model | Why |
+| Role or task | Model | Why |
 | --- | --- | --- |
-| 00 scaffold | Opus 5.5, high | Cross toolchain, NickelHook setup and the shared interfaces everything else depends on |
-| 10 ledger | Opus 5.5, high | Data integrity on a FAT partition; mistakes lose reading data |
-| 11 BookOrbit client | Sonnet 5.5, high | Well-specified protocol, plenty of tests |
-| 12 crash safety | Opus 5.5, high | Boot-loop protection; must be right first time |
-| 13 UI kit | Sonnet 5.5, high | Defined design tokens and components |
-| 20 recorder | Opus 5.5, high | Hooks, timing order at sleep, clock handling |
-| 21 sync engine | Opus 5.5, high | Concurrency, Wi-Fi state, retry and conflict rules |
-| 22 screens | Sonnet 5.5, high | Screens built from the kit |
-| 30 home takeover | Opus 5.5, high | Hooking Nickel's home with fallbacks |
-| 31 jump prompt | Sonnet 5.5, high | Contained feature |
-| 32 highlights | Sonnet 5.5, high | Contained, with a strict read-only rule |
-| 33 collections, status, removals | Sonnet 5.5, medium | Straightforward mapping |
-| 34 migration | Opus 5.5, high | One-shot, touches real user data |
-| Wave review | Opus 5.5, high | Cross-PR consistency against the spec |
+| Orchestrator session (every wave) | Opus 5.5 | Splits work, integrates, reviews against the spec |
+| 00 scaffold | Opus 5.5 (run by the orchestrator itself) | Toolchain, NickelHook and the shared interfaces |
+| 10 ledger | opus | Data integrity on a FAT partition |
+| 11 BookOrbit client | sonnet | Well-specified protocol, plenty of tests |
+| 12 crash safety | opus | Boot-loop protection |
+| 13 UI kit | sonnet | Defined tokens and components |
+| 20 recorder | opus | Hooks, timing order at sleep, clocks |
+| 21 sync engine | opus | Concurrency, Wi-Fi state, retries |
+| 22 screens | sonnet | Built from the kit |
+| 30 home takeover | opus | Hooking Nickel's home with fallbacks |
+| 31 jump prompt | sonnet | Contained |
+| 32 highlights | sonnet | Contained, strict read-only rule |
+| 33 collections, status, removals | sonnet | Straightforward mapping |
+| 34 migration | opus | One-shot, real user data |
+| Wave review | opus | Cross-task consistency |
 
-## First message (wave 0)
+Lower-case names are the subagent model aliases the orchestrator passes when it starts each subagent.
 
-```
-Read docs/tasks/README.md, docs/KICKOFF.md and docs/PROJECT-INSTRUCTIONS.md.
-Remember: work runs in waves and a wave starts only when I say "wave N approved".
-Start one thread for docs/tasks/00-scaffold.md on Opus 5.5 at high effort.
-Tell me when its PR is ready.
-```
+## Starting a session (desktop app)
 
-## Starting later waves
+Code tab → new session → environment: your **Smalt** cloud environment → repository `abijango/smalt` → model **Opus 5.5** → paste the wave prompt below.
 
-After you've merged the previous wave and tested on the Kobo:
+Terminal equivalent: `claude --cloud "<wave prompt>"` after selecting the environment with `/remote-env`.
+
+## Wave 0 prompt
 
 ```
-Wave 1 approved. Start one thread per brief in wave 1, with the models in docs/KICKOFF.md, all at once.
+Implement docs/tasks/00-scaffold.md yourself. Read CLAUDE.md, docs/SPEC.md and docs/VERIFY-FINDINGS.md first.
+Work on branch smalt/wave-0. Run the desktop build and tests and paste the summary.
+Push and open a draft PR titled "Wave 0: scaffold" listing anything that needs a device check. Don't merge.
 ```
 
-Use the same message for waves 2, 3 and 3b, changing the number.
+## Wave prompt (waves 1, 2, 3 and 3b)
 
-## Wave review thread
-
-The coordinator starts this when every PR in a wave is ready:
+Change the wave number and task list.
 
 ```
-On Opus 5.5 at high effort, review every open PR from wave N against docs/SPEC.md, CLAUDE.md and the briefs.
-Check: folder ownership respected, interfaces unchanged, acceptance tests present and passing, crash-safety and data rules followed,
-nothing invented about BookOrbit or Kobalt. Leave review comments on the PRs. Don't push changes. Summarise blockers for me.
+You are the orchestrator for wave 1 of Smalt: tasks 10, 11, 12 and 13.
+Read CLAUDE.md, docs/SPEC.md, docs/VERIFY-FINDINGS.md, docs/tasks/README.md and docs/KICKOFF.md.
+
+1. Start one subagent per task, all in parallel, each on the model docs/KICKOFF.md gives for it.
+   Give each its brief (docs/tasks/<file>.md) and these rules: edit only the folders the brief owns;
+   propose interface changes instead of making them; write the acceptance tests first; report what you built,
+   what needs a device check, and any spec questions.
+2. Don't edit the subagents' folders while they work.
+3. When all have finished, run the full desktop build and tests. Send failures back to the owning subagent;
+   fix only shared build files yourself.
+4. Start one opus review subagent to check every task against its brief, docs/SPEC.md and CLAUDE.md
+   (folder ownership, unchanged interfaces, tests present, crash-safety and data rules, nothing invented about
+   BookOrbit or Kobalt). Fix what it finds through the owning subagent.
+5. Commit each task separately as "<task number>: <task name>" on branch smalt/wave-1, push,
+   and open one draft PR "Wave 1" with a section per task: summary, tests, device checks, questions.
+6. Stop and report. Don't merge, and don't start the next wave.
+Commit and push work in progress regularly.
 ```
 
 ## Between waves (you)
 
-1. Read the review summary; merge the PRs.
-2. Build with ./build-kobo.sh, copy out/KoboRoot.tgz to .kobo/ on the Kobo, test the "Device check" items.
-3. Tell the coordinator anything that failed and ask it to remember fixes that apply to later waves.
-4. Send "wave N approved".
+1. Review the wave PR; merge it.
+2. `./build-kobo.sh`, copy `out/KoboRoot.tgz` to `.kobo/` on the Kobo, test the device checks.
+3. Put anything you learned into the next wave's briefs or `CLAUDE.md`, commit, then start the next wave's session.
