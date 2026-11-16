@@ -1,0 +1,49 @@
+# Smalt's clang-format style.
+#
+# Based on Kobalt's .clang-format (https://github.com/nicoverbruggen/kobalt,
+# commit 679175046d8c, MIT licence, see toolchains/LICENSE.kobalt), which is
+# the Qt project style limited to C and C++, plus Kobalt's project choices.
+# Works with clang-format 14 or newer. Vendored code (toolchains/nickelhook/)
+# is listed in .clang-format-ignore and stays as upstream wrote it.
+Language: Cpp
+BasedOnStyle: WebKit
+Standard: c++17
+ColumnLimit: 100
+CommentPragmas: "^!|^:|^ SPDX-License-Identifier:"
+PointerBindsToType: false
+SpaceAfterTemplateKeyword: true
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeBraces: Custom
+BraceWrapping:
+    AfterClass: true
+    AfterControlStatement: false
+    AfterEnum: false
+    AfterFunction: true
+    AfterNamespace: false
+    AfterObjCDeclaration: false
+    AfterStruct: true
+    AfterUnion: false
+    BeforeCatch: false
+    BeforeElse: false
+    IndentBraces: false
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 8
+NamespaceIndentation: None
+IndentPPDirectives: AfterHash
+PPIndentWidth: 2
+AlignAfterOpenBracket: true
+AlwaysBreakTemplateDeclarations: true
+AllowShortFunctionsOnASingleLine: Inline
+SortIncludes: false
+ForEachMacros:   [ foreach, Q_FOREACH, BOOST_FOREACH, forever, Q_FOREVER, QBENCHMARK, QBENCHMARK_ONCE ]
+BreakConstructorInitializers: BeforeColon
+FixNamespaceComments: true
+ShortNamespaceLines: 1
+AlignEscapedNewlines: Left
+SpaceBeforeCpp11BracedList: false
+ReflowComments: false
+# Project choices: a blank line between definitions, string literals and UI
+# string keys kept whole.
+SeparateDefinitionBlocks: Always
+BreakStringLiterals: false

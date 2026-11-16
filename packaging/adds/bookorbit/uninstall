@@ -1,0 +1,5 @@
+Smalt is installed.
+
+To uninstall Smalt, delete this file and restart the Kobo. Smalt removes
+itself on the next start. Your reading ledger (ledger.sqlite), its backups
+and the logs in this folder stay on the device.

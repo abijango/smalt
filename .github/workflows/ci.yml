@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: Desktop build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config clang-format \
+            qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite libsqlite3-dev
+      - name: Check formatting
+        run: ./scripts/check-format.sh
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DSMALT_TARGET=desktop
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  kobo:
+    name: Kobo package (Qt5, firmware 4.x)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build KoboRoot.tgz in the pinned kobuild image
+        run: ./build-kobo.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KoboRoot
+          path: out/KoboRoot.tgz
+          if-no-files-found: error
