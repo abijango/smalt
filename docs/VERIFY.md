@@ -1,5 +1,7 @@
 # On-device spike
 
+**Items 1–9 are answered in `docs/VERIFY-FINDINGS.md`.** Only item 10 remains, after task 30.
+
 Do this yourself, on the Kobo and against your BookOrbit server, while the scaffold and wave 1 run in the cloud. Wave 2 depends on the answers. Record each answer under its item, then commit this file.
 
 Before starting: back up the whole Kobo user partition, and note the exact Kobalt version you install.

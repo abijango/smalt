@@ -4,7 +4,7 @@ Read this whole file before doing anything. Then read `docs/SPEC.md` and your ta
 
 ## What Smalt is
 
-A NickelHook mod for Kobo e-readers that runs inside Nickel (Kobo's reading app) next to an unmodified Kobalt reader. It records reading sessions offline in its own SQLite ledger, syncs them and other reading data with a BookOrbit server over its REST API (API key, BookOrbit 3.8.0+), and replaces Nickel's home screen with a library browser.
+A NickelHook mod for Kobo e-readers that runs inside Nickel (Kobo's reading app) next to an unmodified Kobalt reader. It records reading sessions offline in its own SQLite ledger, syncs them and other reading data with a BookOrbit server through the protocol BookOrbit's own KOReader plugin uses (`/api/v1/koreader/…`, KOReader credentials), and replaces Nickel's home screen with a library browser.
 
 `docs/SPEC.md` is the source of truth. If your brief and the spec disagree, follow the spec and say so in your PR description.
 
@@ -20,9 +20,10 @@ A NickelHook mod for Kobo e-readers that runs inside Nickel (Kobo's reading app)
 2. **Never break the device.** Code that runs inside Nickel must not block the UI thread, must not crash on missing files or network failure, and must respect the crash-safety rules in `docs/SPEC.md` ("Crash safety").
 3. **Never lose reading data.** The ledger is append-only for sessions. Nothing in the outbox is deleted until the server confirms it. Never delete a ledger file; rename it.
 4. **Never write to Nickel's database for a book that is open.**
-5. **No secrets in the repo.** The BookOrbit API key lives in `.adds/bookorbit/config.ini` on the device. Tests use the mock server and fake keys.
+5. **No secrets in the repo.** The KOReader username and key live in `.adds/bookorbit/config.ini` on the device. Tests use the mock server and fake credentials.
 6. **Desktop-testable first.** Everything that doesn't need Nickel must build and pass tests on Linux x86_64 with the desktop target, because cloud sessions can't run a Kobo.
 7. **Follow the visual design exactly** for anything in `src/ui/`: colours, rules and component behaviour are in `docs/SPEC.md` under "Visual design". Screenshots are in `docs/mockups/`.
+8. **Never open Kobalt's database while Kobalt has it open.** Read `kobalt.sqlite` only after a book closes, from a copy, read-only. Never write it.
 
 ## Repo layout
 
@@ -33,14 +34,14 @@ Created by task 00 (scaffold). Each later task owns one area.
 | `include/smalt/` | Shared interfaces (headers only) | 00 scaffold; changes need review |
 | `src/core/ledger/` | SQLite ledger, schema, migrations | 10 |
 | `src/core/outbox/` | Outbox queue and retry logic | 10 |
-| `src/bookorbit/` | BookOrbit API client | 11 |
+| `src/bookorbit/` | BookOrbit client (KOReader plugin protocol) | 11 |
 | `src/safety/` | Startup marker, two-strike recovery, switches, uninstall | 12 |
 | `src/ui/kit/` | Design tokens, palettes, components, mm-based layout | 13 |
 | `src/nickel/` | NickelHook hooks and Nickel database access | 20, 30 |
 | `src/recorder/` | Session capture | 20 |
 | `src/sync/` | Sync engine, triggers, Wi-Fi control, conflict rules | 21 |
 | `src/ui/screens/` | Home, Library, Series, Search, Book detail, More | 22 |
-| `src/features/` | Jump prompt, highlights, collections, status, removals | 31–33 |
+| `src/features/` | Jump prompt, highlights, collections, status, removals, migration | 31–34 |
 | `tests/` | Unit and integration tests, mirroring `src/` | Same as the code under test |
 | `tools/mock-bookorbit/` | Mock BookOrbit server for tests | 11 |
 | `packaging/` | `.adds/bookorbit/` assets, `KoboRoot.tgz` build | 00 |

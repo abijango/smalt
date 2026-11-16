@@ -1,14 +1,14 @@
-# 32: Highlights and notes
+# 32: Highlights (one way, Kobo to BookOrbit)
 
-**Wave 3. Needs `docs/VERIFY.md` item 4.**
+**Wave 3.**
 
 ## Goal
 
-Two-way highlight and note sync with safe placement.
+Send Kobalt's highlights to BookOrbit, including edits and deletions, without ever writing Kobalt's data.
 
 ## Spec sections
 
-Feature design (Highlights and notes), On-device data model (`annotation`), Sync engine (Conflict rules), Copy.
+Feature design (Highlights and notes), Decisions after verification. Findings: `docs/VERIFY-FINDINGS.md` item 4. Kobalt's storage contract: its `doc/storage.md` (Profile connection, Backups and external database access).
 
 ## Owns
 
@@ -16,11 +16,12 @@ Feature design (Highlights and notes), On-device data model (`annotation`), Sync
 
 ## Build
 
-- Read Kobalt's highlights from wherever VERIFY item 4 found them; store with position, text and about 40 characters either side.
-- Place remote highlights by position, then by text search; list unplaced ones on the book detail screen with the spec's copy.
-- Write into Nickel's database only for closed books.
-- Tombstones for deletions; newest edit wins.
+- After a book closes and Kobalt has closed `kobalt.sqlite` (returned to a rollback journal, no `-wal` file left), copy the database file set, then read the copy read-only. Never open the live file while Kobalt may hold it; skip and retry later if in doubt.
+- Read that book's highlights (IDs, CREngine endpoints, text, note, colour, style, timestamps). Map Kobalt's book key to the ledger's book via `book_map`.
+- Diff against the last sent state in the ledger; send creates, edits and deletions through `plugin/annotations/exchange` and `exchange-ack`.
+- List BookOrbit-only highlights on the book's detail screen (read-only).
+- Schema guard: check Kobalt's `PRAGMA user_version` (4 at the time of writing) and table layout; if it changed, stop and log rather than guess.
 
 ## Acceptance tests
 
-Round trips: create, edit and delete on each side; a highlight from a different edition that can only be placed by text; one that can't be placed.
+Create, edit and delete round trips against the mock server; a changed Kobalt schema version stops cleanly; a locked or in-use database is skipped and retried.

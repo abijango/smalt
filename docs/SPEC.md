@@ -17,7 +17,7 @@ It replaces BookOrbit's built-in Kobo sync. That sync builds reading sessions pa
 | Home screen | The companion is the home screen; books open straight into Kobalt, and Kobo's own home is at the top of the More tab |
 | Wi-Fi triggers | Just before sleep, on wake, and on book close |
 | Reading progress | Two-way; ask before jumping to a newer position from another device |
-| Highlights and notes | Two-way |
+| Highlights and notes | Kobo to BookOrbit only, until Kobalt offers a way to import highlights |
 | Collections | BookOrbit is the source; mirrored one-way into Nickel collections, Kobo edits overwritten |
 | Books removed upstream | Ask before removing anything from the device |
 | Status and ratings | Two-way: finished, abandoned and ratings |
@@ -25,13 +25,28 @@ It replaces BookOrbit's built-in Kobo sync. That sync builds reading sessions pa
 
 Out of scope for now: audiobooks, DRM-protected books, and KOReader.
 
+### Decisions after verification
+
+Checked against Kobalt's source, BookOrbit's KOReader plugin and the Clara Colour's database. Details are in `docs/VERIFY-FINDINGS.md`.
+
+| Area | Decision |
+| --- | --- |
+| BookOrbit's Kobo sync | Removed. The Kobo signs back in to Kobo's own servers, and Smalt handles everything to do with BookOrbit |
+| BookOrbit connection | The protocol BookOrbit's own KOReader plugin uses (`/api/v1/koreader/…`), with KOReader credentials; no API key |
+| Reading sessions | Recorded by Smalt's hooks, with active time from Nickel's `TimeSpentReading`; uploaded as page events, then a sweep so BookOrbit stops estimating for this device |
+| Device identity | One stable, unique device ID per Kobo, kept in the ledger |
+| Book identity | KOReader's partial MD5 of each file, matched once through the server's match check |
+| Positions | KOReader-style percentage plus XPointer; Kobalt's CREngine positions are compatible |
+| Highlights | One way, Kobo to BookOrbit, read from Kobalt's database after a book closes |
+| Kobalt's KOSync | Kept off, so only Smalt talks to BookOrbit |
+
 ## Architecture
 
 The companion is one NickelHook mod (Qt 5 on 4.x) loaded into Nickel's process, next to Kobalt. Kobalt keeps doing what it does today, and the mod never calls into it: everything flows through Nickel.
 
 ![Architecture](mockups/architecture.png)
 
-Inside the Nickel process: Kobalt (unmodified) renders EPUBs and reports progress to Nickel; the Nickel database holds progress, sessions, highlights and collections; Nickel signals report book open, close, sleep, wake and Wi-Fi changes. The companion contains four parts: the home screen and library, the recorder, the sync engine and the ledger. The sync engine talks to the BookOrbit server over HTTPS with an API key.
+Inside the Nickel process: Kobalt (unmodified) renders EPUBs and reports progress to Nickel; the Nickel database holds progress, sessions, highlights and collections; Nickel signals report book open, close, sleep, wake and Wi-Fi changes. The companion contains four parts: the home screen and library, the recorder, the sync engine and the ledger. The sync engine talks to the BookOrbit server over HTTPS with a KOReader login.
 
 Kobalt hands progress and sessions to Nickel; Nickel's signals tell the recorder when a book is closed or the device sleeps, and it copies them into the ledger at that moment, and the sync engine moves the ledger to BookOrbit and writes pulled changes back into Nickel while the book is closed.
 
@@ -42,7 +57,7 @@ Kobalt hands progress and sessions to Nickel; Nickel's signals tell the recorder
 | Kobalt | Its Qt 5 NickelHook build toolchain, install packaging (`.adds` plus `KoboRoot.tgz`), and its `AGENTS.md` conventions for agent-driven builds |
 | NickelMenu | A fallback entry that switches between the companion and Kobo's own home, which works on 4.x |
 | NickelDBus | Wi-Fi control, network and sleep signals, quiet library import, and opening a book |
-| BookOrbit API (3.8.0+) | Library, downloads and sync, using a scoped API key |
+| BookOrbit KOReader plugin protocol | Catalog, downloads, progress, sessions as page events, highlights, status and ratings, with KOReader credentials |
 | BookOrbit KOReader plugin | Reference for sync behaviour: session rules, progress and highlight handling |
 
 ## Crash safety
@@ -87,7 +102,7 @@ The ledger sits at `.adds/bookorbit/ledger.sqlite` on the user partition, the on
 
 | Table | Holds | Notes |
 | --- | --- | --- |
-| `server` | Server URL, device ID, sync cursors | One row; the API key itself stays in a separate config file |
+| `server` | Server URL, device ID, sync cursors | One row; the credentials stay in a separate config file |
 | `book_map` | Nickel ContentID ↔ BookOrbit book and file IDs, file hash, how it got here | Written when the mod downloads a book; matched once for existing books |
 | `session` | One row per reading session: UUID, book, start and end time (UTC), active seconds, start and end position and percentage, pages turned | Append-only; never edited after it's sent |
 | `progress` | Latest local position per book, with timestamp | Also holds the latest known remote position, for the offline jump prompt |
@@ -102,11 +117,11 @@ The ledger sits at `.adds/bookorbit/ledger.sqlite` on the user partition, the on
 Two sources, cross-checked:
 
 1. **The mod's own hooks.** It records book open and close, sleep and wake, and USB connect with the device clock and a monotonic clock. These mark hard session boundaries even if nothing else does.
-2. **Nickel's records.** Kobalt hands progress and reading sessions to Nickel, and its beta 5 started logging Nickel's detailed session events. On book close, and when the device goes to sleep with a book still open, the mod copies those events and the book's current position into its own ledger, before anything else can purge them.
+2. **Nickel's counters.** Kobalt adds each interval's active reading seconds to the book's `TimeSpentReading` when the interval ends, and writes the position before sleep and on close. The mod takes a session's active time from the change in `TimeSpentReading` and its end position from the `content` row. Nickel's per-session analytics events can't be relied on: on 4.46 they're dropped in some configurations, and the test device had none.
 
 The mod's own boundaries win when the two disagree. Sessions under 10 seconds are dropped, matching BookOrbit's own rule for KOReader.
 
-Every ledger row has a UUID made on the device. The server de-duplicates on it, so a retried or partial upload can never count the same reading twice.
+Every ledger row has a UUID made on the device. Uploads are acknowledged with a per-book watermark, so a retried or partial upload can never count the same reading twice.
 
 ### Sleeping inside a book
 
@@ -157,12 +172,12 @@ Pushing first means the server already has this device's reading before it answe
 
 On 4.x the mod drives Wi-Fi through the same Nickel functions NickelDBus uses, not by talking to the Wi-Fi driver directly, so Nickel's status bar and settings stay consistent. Before connecting, it notes whether Wi-Fi was off; afterwards it turns it off again only if it was the one that turned it on.
 
-One side effect to block: when Wi-Fi comes up, Nickel may start its own Kobo sync. If the device was ever pointed at BookOrbit's Kobo sync endpoint, that endpoint must be removed from Kobo's config, or BookOrbit will record the same reading twice from two sources.
+Nickel's own sync talks only to Kobo's servers. Books Smalt downloads are files on the device, which Kobo's sync doesn't carry, so nothing but Smalt talks to BookOrbit. Kobalt's own KOSync must stay off (System > Hide features > KOSync): files from Smalt are eligible for it, and it would send BookOrbit positions without sessions, which brings back estimated sessions.
 
 ### Networking
 
 - HTTPS with a CA bundle shipped in the mod, since the device's own certificates may be too old for current Let's Encrypt chains.
-- The API key is stored in `.adds/bookorbit/config.ini`, scoped to your user with only the permissions the mod needs.
+- Credentials are stored in `.adds/bookorbit/config.ini`, as the KOReader username and key from BookOrbit's Settings > KOReader.
 - Timeouts: 5 s to connect, 15 s per request; failed items retry with exponential backoff, capped at 6 hours.
 
 ## Feature design
@@ -218,7 +233,7 @@ On close or sleep, the book's position is pushed with the session. If you wake t
 
 ### Highlights and notes
 
-Each highlight is stored with its position, the highlighted text, about 40 characters either side, the note and the colour. Highlights from BookOrbit are placed by position first and by text search if that fails; any that can't be placed are listed on the book's detail page, not silently dropped. Highlights are only written into Nickel's database while that book is closed.
+Kobalt keeps highlights in its own database, not Nickel's, and only Kobalt may write that file. So highlights sync one way. After a book closes and Kobalt has released its database, Smalt reads that book's highlights from a copy and sends new, changed and deleted ones to BookOrbit through the plugin's annotation exchange, with their positions, text, note and colour. Highlights made on the web or phone stay in BookOrbit and are listed on the book's detail screen. If Kobalt adds a way to import highlights, the other direction can be added without changing anything else.
 
 ### Collections
 
@@ -264,14 +279,14 @@ The companion should be invisible while you read and quiet the rest of the time:
 | Jump prompt | Your phone is at 54% (Chapter 12), 2 hours ago. You're at 41% here. **Jump to 54%** · Stay here |
 | Manual sync done | Synced: 2 sessions, 1 highlight, 1 position |
 | Repeated failure | Couldn't reach BookOrbit. Your reading is saved and will sync later. |
-| Key rejected | BookOrbit rejected the API key. Check it in BookOrbit settings. |
+| Key rejected | BookOrbit didn't accept your KOReader login. Check it in BookOrbit's Settings > KOReader. |
 | Removal banner | 3 books were removed from BookOrbit. **Review** |
 | Removal choice | Remove from Kobo · Keep, unlinked · Decide later |
 | Highlight not placed | 2 highlights from BookOrbit couldn't be placed in this edition. **Show them** |
 
 ### Settings screen
 
-- Server URL and API key, with a **Test connection** button.
+- Server URL, KOReader username and password, with a **Test connection** button.
 - A switch for each sync trigger, plus the battery threshold for pre-sleep sync.
 - Collection mirroring on or off, and whether to keep an "Abandoned" collection.
 - Download folder.
@@ -338,21 +353,27 @@ The device model is read at startup and picks the palette; every layout is share
 
 ![Series list, series detail and search](mockups/series-detail-search.png)
 
+## Migration off Kobo sync
+
+Run once, after Smalt works on the device. Today's 452 books came through BookOrbit's Kobo sync as KEPUBs with Kobo-style IDs. Signing out of a Kobo account deletes Nickel's database and removes those books, so the order matters.
+
+1. **Final Kobo sync.** Sync once more so BookOrbit has the latest position and status for every book.
+2. **Back up** the whole user partition, including `.adds/kobalt/`.
+3. **Install Smalt and run Migrate from Kobo sync** in its Settings. With no book open, it reads Kobalt's highlights for the Kobo-sync copies and uploads them to BookOrbit, and records which books you're reading. No sessions are uploaded until migration finishes.
+4. **Sign out, then sign in to Kobo's own servers.** Remove BookOrbit's Kobo sync address from Kobo's config if it was set by hand.
+5. **Re-download** the books you're reading first, then others when you want them. Smalt writes each book's BookOrbit position into Nickel before its first open, and Kobalt imports it then.
+6. **Turn off Kobalt's KOSync**, read a little, and confirm the session appears in BookOrbit with the right times.
+
+Kobalt's per-book typography and bookmarks for the old copies stay in Kobalt's profile but don't carry over to the new files.
+
 ## Risks, open questions and build phases
 
 The biggest unknowns are about Kobalt's behaviour and BookOrbit's API, not about the mod itself, so the first phase is a short spike that answers them before any real building.
 
 ### Verify first
 
-- [ ] Kobalt's Qt 5 package runs on 4.46.23852 and Nickel records its sessions (with the session start and end events) in the event table.
-- [ ] Kobalt reads its starting position from Nickel's database, so a jump written there takes effect, and saves its position to Nickel when the device sleeps with a book open.
-- [ ] Where Kobalt stores highlights: Nickel's bookmark table or its own files.
-- [ ] Which BookOrbit endpoints accept 3.8.0 API keys, and whether any of them write reading sessions. If not, use the KOReader sync endpoints with a KOReader credential instead.
-- [ ] The position format BookOrbit returns for EPUBs read on the web or phone.
-- [ ] Whether BookOrbit exposes a feed of changes since a cursor, including deleted books, or the mod has to compare lists itself.
-- [ ] The mod can take over Nickel's home screen on 4.46.23852 and hand back to it cleanly, including after a book is closed in Kobalt.
-- [ ] BookOrbit's API supports server-side search, a paged series list, and filters by format and status.
-- [ ] Progress for PDFs and comics read in Kobo's built-in reader lands in Nickel's database the same way as Kobalt's.
+- [x] Kobalt sessions, positions, highlights, PDF and comic progress, and the BookOrbit protocol: answered in `docs/VERIFY-FINDINGS.md`.
+- [ ] Home screen takeover on 4.46.23852, with the scaffold build on the device.
 
 ### Risks
 
@@ -363,7 +384,7 @@ The biggest unknowns are about Kobalt's behaviour and BookOrbit's API, not about
 | Writing to Nickel's database corrupts it | Lost library state | Write only to closed books, in short transactions, after a backup copy of the database |
 | Pre-sleep sync drains the battery | Shorter battery life | 15 s cap, battery threshold, skip when nothing is queued |
 | Positions don't convert exactly | Jump lands near, not on, the right spot | Chapter plus percentage fallback; the prompt shows both positions |
-| API keys can't write sessions | No session upload | Fall back to the KOReader sync protocol |
+| BookOrbit changes the plugin protocol | Sync stops working | Check the server's capability list before using a feature; BookOrbit keeps this protocol compatible for its own plugin |
 
 ### Build phases
 
@@ -372,8 +393,8 @@ The biggest unknowns are about Kobalt's behaviour and BookOrbit's API, not about
 3. **Background sync:** book close, wake and pre-sleep triggers, with Wi-Fi control.
 4. **Browser:** library, search, book detail, download, import and open in Kobalt.
 5. **Progress and status:** two-way positions with the jump prompt, plus status and ratings.
-6. **Highlights and notes:** two-way, with text-search fallback.
-7. **Collections and removals:** the one-way mirror and the removal review screen.
+6. **Highlights and notes:** Kobo to BookOrbit, read from Kobalt's database after a book closes.
+7. **Collections and removals:** the one-way mirror and the removal review screen, then the move off Kobo sync (see Migration off Kobo sync).
 8. **Qt 6 port:** for 5.x and 6.x firmware, once 4.x is stable.
 
 ### Sources
