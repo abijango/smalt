@@ -46,16 +46,31 @@ public:
             b.hash = in.hash.toLower();
             b.fileId = in.bookFileId;
             b.watermark = in.watermark;
+            int atOrBelowWatermark = 0;
             for (int j = 0; j < in.events.size(); ++j) {
                 PageEvent e = in.events.at(j);
                 if (e.startTime < 1 || e.totalPages < 1 || e.page < 0) {
                     ++m_result.eventsSkippedInvalid;
                     continue;
                 }
-                if (e.startTime <= in.watermark)
-                    continue; // Already acknowledged.
+                if (e.startTime <= in.watermark) {
+                    // Acknowledged already, or the device clock went backwards and
+                    // these sessions will never upload: report either way.
+                    ++atOrBelowWatermark;
+                    continue;
+                }
                 e.durationSeconds = qBound(0, e.durationSeconds, kMaxEventDurationSeconds);
                 b.pending.append(e);
+            }
+            if (atOrBelowWatermark > 0) {
+                m_result.eventsSkippedAtOrBelowWatermark += atOrBelowWatermark;
+                log::warn(kModule,
+                          QStringLiteral("book %1: skipped %2 page events at or below the "
+                                         "watermark %3 (already uploaded, or the device clock "
+                                         "went backwards)")
+                                  .arg(b.hash)
+                                  .arg(atOrBelowWatermark)
+                                  .arg(in.watermark));
             }
             std::stable_sort(b.pending.begin(), b.pending.end(), eventLess);
             if (!b.pending.isEmpty())

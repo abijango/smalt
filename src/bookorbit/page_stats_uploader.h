@@ -65,6 +65,7 @@ struct SessionUploadResult
     int eventsAccepted = 0;
     int eventsDuplicate = 0;
     int eventsSkippedInvalid = 0;
+    int eventsSkippedAtOrBelowWatermark = 0; // Not sent: startTime <= the book's watermark.
     int booksAcknowledged = 0;
     bool sweepSent = false; // A sweep was sent and acknowledged.
     bool sweepOwed = false; // Events were acknowledged but no sweep got through.

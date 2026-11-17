@@ -163,6 +163,7 @@ private slots:
         QCOMPARE(run->doneCalls, 1);
         QVERIFY(run->result.complete);
         QCOMPARE(run->result.requests, 0);
+        QCOMPARE(run->result.eventsSkippedAtOrBelowWatermark, 3); // reported, not silent
         QVERIFY(!run->result.sweepSent);
         QVERIFY(!run->result.sweepOwed);
         QCOMPARE(m_server.requests().size(), 0);
@@ -478,6 +479,18 @@ private slots:
         QVERIFY(!run->result.sweepSent);
         QVERIFY(!run->result.sweepOwed);
         QCOMPARE(m_server.requestsTo("/plugin/sweeps").size(), 0);
+    }
+
+    void eventsBehindAWatermarkFromABackwardsClockAreSkippedAndReported()
+    {
+        // Watermark is ahead of new sessions (clock went back): they are skipped, counted,
+        // the call still succeeds, and events after the watermark still go.
+        SessionUploadBook b = book(1, events(5)); // kBase .. kBase+240
+        b.watermark = kBase + 100;
+        const auto run = upload({ b });
+        QVERIFY(run->result.result.ok());
+        QCOMPARE(run->result.eventsSkippedAtOrBelowWatermark, 2); // kBase, kBase+60
+        QCOMPARE(run->result.eventsSent, 3);
     }
 
     void unorderedEventsAreSortedAndOnlyTheNewOnesGo()
