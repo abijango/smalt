@@ -126,7 +126,10 @@ const char *const kVersion1[] = {
     // Pending uploads (kind: 0 session, 1 position, 2 annotation, 3 status).
     // One row per kind + entity. payload_rev counts payload replacements;
     // sent_rev is the revision last handed out, so a confirm only removes
-    // the row if nothing changed while it was in flight.
+    // the row if nothing changed while it was in flight. sent_tombstone is 1
+    // when an annotation item was handed out while its annotation was already
+    // deleted, i.e. the upload carried the deletion; only then does a confirm
+    // remove the tombstone.
     "CREATE TABLE outbox ("
     " id INTEGER PRIMARY KEY AUTOINCREMENT,"
     " kind INTEGER NOT NULL,"
@@ -138,6 +141,7 @@ const char *const kVersion1[] = {
     " next_retry_utc INTEGER,"
     " payload_rev INTEGER NOT NULL DEFAULT 1,"
     " sent_rev INTEGER NOT NULL DEFAULT 0,"
+    " sent_tombstone INTEGER NOT NULL DEFAULT 0,"
     " UNIQUE (kind, entity_uuid))",
     "CREATE INDEX outbox_ready ON outbox (kind, next_retry_utc)",
 

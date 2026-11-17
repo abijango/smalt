@@ -12,6 +12,7 @@
 
 #include <QDateTime>
 #include <QSqlDatabase>
+#include <QSqlError>
 #include <QString>
 #include <QVariant>
 
@@ -29,6 +30,20 @@ constexpr int kBackupsKept = 7;
 // First retry delay for a failed outbox item; doubles per attempt up to
 // kOutboxMaxBackoffSeconds. The spec gives only the cap (Sync engine, "Networking").
 constexpr int kOutboxFirstBackoffSeconds = 30;
+
+// SQLite primary result codes the ledger cares about.
+constexpr int kSqliteBusy = 5;
+constexpr int kSqliteLocked = 6;
+constexpr int kSqliteCorrupt = 11;
+constexpr int kSqliteNotADatabase = 26;
+
+// The SQLite primary result code behind a QSQLITE error, or -1 if there is
+// none. Works with Qt 5.2 (QSqlError::number()) and later (nativeErrorCode()).
+int sqliteErrorCode(const QSqlError &error);
+
+// True only for SQLITE_CORRUPT and SQLITE_NOTADB. I/O errors, locks and
+// everything else are not corruption and never get a ledger renamed.
+bool isCorruptionError(const QSqlError &error);
 
 // A lowercase UUID without braces, made on the device.
 QString newUuid();

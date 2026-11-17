@@ -210,7 +210,13 @@ QVector<OutboxItem> SqlOutbox::nextBatch(const QDateTime &nowUtc, int max, const
     for (const OutboxItem &item : out) {
         if (!ok)
             break;
-        q.prepare(QStringLiteral("UPDATE outbox SET sent_rev = payload_rev WHERE id = ?"));
+        // For annotations, also note whether this upload carries the
+        // deletion, so only a confirmed deletion removes the tombstone.
+        q.prepare(QStringLiteral(
+                "UPDATE outbox SET sent_rev = payload_rev, sent_tombstone = (kind = ? AND"
+                " EXISTS (SELECT 1 FROM annotation WHERE annotation.uuid = outbox.entity_uuid"
+                " AND annotation.deleted_utc IS NOT NULL)) WHERE id = ?"));
+        q.addBindValue(int(OutboxKind::Annotation));
         q.addBindValue(item.id);
         ok = q.exec();
         if (ok && item.kind == OutboxKind::Session) {
@@ -243,8 +249,8 @@ Status SqlOutbox::markConfirmed(const QVector<qint64> &ids)
     QSqlQuery q(d);
     int removed = 0;
     for (qint64 id : ids) {
-        q.prepare(QStringLiteral("SELECT kind, entity_uuid, payload_rev, sent_rev FROM outbox"
-                                 " WHERE id = ?"));
+        q.prepare(QStringLiteral("SELECT kind, entity_uuid, payload_rev, sent_rev, sent_tombstone"
+                                 " FROM outbox WHERE id = ?"));
         q.addBindValue(id);
         if (!q.exec())
             return sqlFailure(q.lastError(), "read item");
@@ -254,6 +260,7 @@ Status SqlOutbox::markConfirmed(const QVector<qint64> &ids)
         const QString uuid = q.value(1).toString();
         const qint64 sentRev = q.value(3).toLongLong();
         const bool current = q.value(2).toLongLong() == sentRev;
+        const bool sentDeletion = q.value(4).toInt() != 0;
 
         if (sentRev == 0)
             continue; // Never handed out: nothing of it can have been confirmed.
@@ -282,8 +289,11 @@ Status SqlOutbox::markConfirmed(const QVector<qint64> &ids)
             q.addBindValue(uuid);
             if (!q.exec())
                 return sqlFailure(q.lastError(), "confirm session");
-        } else if (kind == int(OutboxKind::Annotation)) {
-            // A confirmed deletion: the tombstone has done its job.
+        } else if (kind == int(OutboxKind::Annotation) && sentDeletion) {
+            // The confirmed upload was the deletion: the tombstone has done
+            // its job. A confirmed earlier edit leaves it for the deletion
+            // still to be queued. (If the annotation was edited back to life
+            // since, deleted_utc is NULL and nothing is removed.)
             q.prepare(QStringLiteral("DELETE FROM annotation WHERE uuid = ?"
                                      " AND deleted_utc IS NOT NULL"));
             q.addBindValue(uuid);

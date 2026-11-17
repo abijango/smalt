@@ -291,6 +291,60 @@ private slots:
         QCOMPARE(left[0].uuid, live.uuid);
     }
 
+    void confirmedEarlierEditKeepsTombstone()
+    {
+        // An edit is in flight; the user deletes the highlight; the edit is
+        // confirmed before the deletion is queued. The tombstone must stay so
+        // the deletion still reaches the server.
+        AnnotationRecord a;
+        a.contentId = "b1";
+        a.text = "x";
+        a.updatedUtc = kNow;
+        QVERIFY(m_ledger->upsertAnnotation(&a).ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Annotation, a.uuid, "b1", "{\"edit\":1}").ok());
+        const QVector<OutboxItem> edit = m_outbox->nextBatch(kNow);
+        QCOMPARE(edit.size(), 1);
+
+        QVERIFY(m_ledger->markAnnotationDeleted(a.uuid, kNow.addSecs(30)).ok());
+        QVERIFY(m_outbox->markConfirmed(idsOf(edit)).ok());
+        QCOMPARE(m_outbox->pendingCount(), 0);
+        QVector<AnnotationRecord> left = m_ledger->annotationsForBook("b1");
+        QCOMPARE(left.size(), 1);
+        QCOMPARE(left[0].deletedUtc, kNow.addSecs(30));
+
+        // Now the deletion goes out and is confirmed: tombstone removed.
+        QVERIFY(m_outbox->enqueue(OutboxKind::Annotation, a.uuid, "b1", "{\"deleted\":1}").ok());
+        const QVector<OutboxItem> deletion = m_outbox->nextBatch(kNow);
+        QCOMPARE(deletion.size(), 1);
+        QCOMPARE(deletion[0].payload, QByteArray("{\"deleted\":1}"));
+        QVERIFY(m_outbox->markConfirmed(idsOf(deletion)).ok());
+        QVERIFY(m_ledger->annotationsForBook("b1").isEmpty());
+    }
+
+    void deletionThenEditBackToLifeKeepsAnnotation()
+    {
+        // The deletion is in flight, then an edit made after it brings the
+        // highlight back before anything is re-queued. Confirming the
+        // deletion must not remove the live row.
+        AnnotationRecord a;
+        a.contentId = "b1";
+        a.text = "x";
+        a.updatedUtc = kNow;
+        QVERIFY(m_ledger->upsertAnnotation(&a).ok());
+        QVERIFY(m_ledger->markAnnotationDeleted(a.uuid, kNow.addSecs(10)).ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Annotation, a.uuid, "b1", "{\"deleted\":1}").ok());
+        const QVector<OutboxItem> deletion = m_outbox->nextBatch(kNow);
+        QCOMPARE(deletion.size(), 1);
+
+        AnnotationRecord revived = m_ledger->annotationsForBook("b1")[0];
+        revived.deletedUtc = QDateTime();
+        revived.note = "back";
+        revived.updatedUtc = kNow.addSecs(20);
+        QVERIFY(m_ledger->upsertAnnotation(&revived).ok());
+        QVERIFY(m_outbox->markConfirmed(idsOf(deletion)).ok());
+        QCOMPARE(m_ledger->annotationsForBook("b1").size(), 1);
+    }
+
     void rejectsBadInputAndClosedLedger()
     {
         QCOMPARE(m_outbox->enqueue(OutboxKind::Session, QString(), "b1", "{}").code,

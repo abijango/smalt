@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSqlError>
 #include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -144,6 +145,89 @@ private slots:
         QVERIFY(ledger->open().ok());
         QCOMPARE(corruptCopies(paths).size(), 1);
         QVERIFY(ledger->sessionsForBook(QStringLiteral("book-1")).isEmpty());
+    }
+
+    void ioErrorOnHealthyFileRenamesNothing()
+    {
+        // A healthy ledger whose journal can't be used (here: its -journal
+        // path is a folder). SQLite fails the first read with an I/O-class
+        // error, not SQLITE_CORRUPT: open must fail with IoError, rename
+        // nothing, and work again once the problem goes away.
+        QTemporaryDir dir;
+        Paths paths = Paths::forRoot(dir.path());
+        const QString id = makeLedgerWithSession(paths);
+        QVERIFY(!id.isEmpty());
+        const QByteArray before = readAll(paths.ledger());
+        const QString journal = paths.ledger() + QStringLiteral("-journal");
+        QVERIFY(QDir().mkpath(journal));
+
+        auto ledger = createLedger(paths);
+        Status s = ledger->open();
+        QVERIFY2(!s.ok(), "open should fail while the journal is unusable");
+        QCOMPARE(s.code, StatusCode::IoError);
+        QVERIFY(!ledger->isOpen());
+        QVERIFY(corruptCopies(paths).isEmpty());
+        QCOMPARE(readAll(paths.ledger()), before);
+
+        QVERIFY(QDir().rmdir(journal)); // The "partition" is fine again.
+        QVERIFY(ledger->open().ok());
+        QCOMPARE(ledger->deviceId(), id);
+        QCOMPARE(ledger->sessionsForBook(QStringLiteral("book-1")).size(), 1);
+        QVERIFY(corruptCopies(paths).isEmpty());
+    }
+
+    void onlyCorruptAndNotADatabaseCountAsCorruption_data()
+    {
+        QTest::addColumn<QString>("code");
+        QTest::addColumn<bool>("corrupt");
+        QTest::addColumn<bool>("busy");
+        QTest::newRow("SQLITE_IOERR") << "10" << false << false;
+        QTest::newRow("SQLITE_IOERR_READ") << "266" << false << false;
+        QTest::newRow("SQLITE_CANTOPEN") << "14" << false << false;
+        QTest::newRow("SQLITE_FULL") << "13" << false << false;
+        QTest::newRow("SQLITE_BUSY") << "5" << false << true;
+        QTest::newRow("SQLITE_LOCKED") << "6" << false << true;
+        QTest::newRow("SQLITE_CORRUPT") << "11" << true << false;
+        QTest::newRow("SQLITE_CORRUPT_VTAB") << "267" << true << false;
+        QTest::newRow("SQLITE_NOTADB") << "26" << true << false;
+        QTest::newRow("no code") << "" << false << false;
+    }
+
+    void onlyCorruptAndNotADatabaseCountAsCorruption()
+    {
+        QFETCH(QString, code);
+        QFETCH(bool, corrupt);
+        QFETCH(bool, busy);
+        const QSqlError e(QStringLiteral("driver"), QStringLiteral("database"),
+                          QSqlError::StatementError, code);
+        QCOMPARE(ledgerdb::isCorruptionError(e), corrupt);
+        const int primary = ledgerdb::sqliteErrorCode(e);
+        QCOMPARE(primary == ledgerdb::kSqliteBusy || primary == ledgerdb::kSqliteLocked, busy);
+    }
+
+    void realCorruptionReportsSqliteCorrupt()
+    {
+        // The driver really reports the code the classification relies on.
+        QTemporaryDir dir;
+        Paths paths = Paths::forRoot(dir.path());
+        QVERIFY(!makeLedgerWithSession(paths).isEmpty());
+        QByteArray bytes = readAll(paths.ledger());
+        for (int i = 100; i < bytes.size(); ++i)
+            bytes[i] = char(0xA5 ^ (i & 0xff));
+        QVERIFY(writeFile(paths.ledger(), bytes));
+        int code = -1;
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), "probe");
+            db.setDatabaseName(paths.ledger());
+            QVERIFY(db.open());
+            QSqlQuery q(db);
+            QVERIFY(!q.exec(QStringLiteral("SELECT count(*) FROM sqlite_master")));
+            code = ledgerdb::sqliteErrorCode(q.lastError());
+            QVERIFY(ledgerdb::isCorruptionError(q.lastError()));
+            db.close();
+        }
+        QSqlDatabase::removeDatabase("probe");
+        QCOMPARE(code, ledgerdb::kSqliteCorrupt);
     }
 
     void journalTravelsWithTheCorruptFile()

@@ -128,6 +128,9 @@ PendingChoice choiceFromDb(int v)
 
 bool looksBusy(const QSqlError &e)
 {
+    const int code = ledgerdb::sqliteErrorCode(e);
+    if (code == ledgerdb::kSqliteBusy || code == ledgerdb::kSqliteLocked)
+        return true;
     const QString t = e.text().toLower();
     return t.contains(QLatin1String("locked")) || t.contains(QLatin1String("busy"));
 }
@@ -358,13 +361,18 @@ Status SqlLedger::openChecked()
     if (!db.open())
         return Status::error(StatusCode::IoError, db.lastError().text());
 
-    // Classifies a failure while reading the file: a lock is not corruption,
-    // and a file that isn't there yet can't be corrupt.
+    // Classifies a failure while reading the file. Only SQLite's own verdict
+    // (SQLITE_CORRUPT, SQLITE_NOTADB) on a file with a SQLite header counts as
+    // corruption. Anything else (an I/O error just after a remount, a lock, a
+    // journal that can't be opened) leaves the file untouched: renaming a
+    // healthy ledger would strand its unsent sessions and outbox.
     auto classify = [&](const QSqlError &e, const char *what) {
-        const QString message = QStringLiteral("%1: %2").arg(QLatin1String(what), e.text());
+        const QString message = QStringLiteral("%1: %2 (SQLite code %3)")
+                                        .arg(QLatin1String(what), e.text())
+                                        .arg(ledgerdb::sqliteErrorCode(e));
         if (looksBusy(e))
             return Status::error(StatusCode::Busy, message);
-        if (state == ledgerfiles::FileState::LooksLikeSqlite)
+        if (state == ledgerfiles::FileState::LooksLikeSqlite && ledgerdb::isCorruptionError(e))
             return Status::error(StatusCode::Corrupt, message);
         return Status::error(StatusCode::IoError, message);
     };
@@ -1156,6 +1164,29 @@ std::unique_ptr<Ledger> createLedger(const Paths &paths)
 }
 
 namespace ledgerdb {
+
+int sqliteErrorCode(const QSqlError &error)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(5, 3, 0)
+    // Since 5.3 the QSQLITE driver gives the sqlite3 result code as a string.
+    bool ok = false;
+    const int code = error.nativeErrorCode().toInt(&ok);
+    if (!ok)
+        return -1;
+#else
+    // Qt 5.2: the QSQLITE driver passes the sqlite3 result code as the number.
+    const int code = error.number();
+#endif
+    if (code < 0)
+        return -1;
+    return code & 0xff; // The primary code, also if extended codes are on.
+}
+
+bool isCorruptionError(const QSqlError &error)
+{
+    const int code = sqliteErrorCode(error);
+    return code == kSqliteCorrupt || code == kSqliteNotADatabase;
+}
 
 QSqlDatabase database(Ledger *ledger)
 {
