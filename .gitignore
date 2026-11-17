@@ -14,3 +14,6 @@ toolchains/cache/
 # Never commit real credentials
 config.ini
 *.key
+
+# CI reports (scripts/ci/)
+reports/

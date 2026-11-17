@@ -50,3 +50,15 @@ The Kobo Qt5 SDK is **Qt 5.2** with **GCC 4.9's C++ standard library** (compiled
 ```
 
 `.clang-format` is Kobalt's (Qt project style). Vendored NickelHook in `toolchains/nickelhook/` is left as upstream wrote it.
+
+## CI and the PR report
+
+Every check in CI runs in a Docker container: the desktop build and tests in `ubuntu:24.04` (`scripts/ci/desktop-checks.sh`), the Kobo package in the pinned kobuild Qt5 image (`scripts/ci/kobo-checks.sh`). Each writes a Markdown report, and on pull requests CI posts them as one comment and updates it on every push. The comment lists each step, each test program with its passing test functions, failure details, and the Kobo library checks (ARM hard-float, glibc ≤ 2.19, GCC 4.9 C++ runtime, exported entry points, package contents). The `KoboRoot` artifact on the run is the package to install.
+
+To get the same report on your machine (needs Docker):
+
+```bash
+scripts/ci/run-local.sh            # both; or: desktop | kobo
+```
+
+It writes `reports/pr-comment.md`.
