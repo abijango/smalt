@@ -14,8 +14,16 @@ engine=${CONTAINER_ENGINE:-docker}
 what=${1:-all}
 status=0
 
+# Behind a TLS-intercepting proxy, the host's CA bundle (PIP_CERT or
+# SSL_CERT_FILE) is passed into the container so pip can download.
+ca_args=()
+ca=${PIP_CERT:-${SSL_CERT_FILE:-}}
+if [[ -n "$ca" && -f "$ca" ]]; then
+    ca_args=(-v "$ca:/etc/smalt-host-ca.pem:ro" -e PIP_CERT=/etc/smalt-host-ca.pem)
+fi
+
 if [[ $what == all || $what == desktop ]]; then
-    "$engine" run --rm \
+    "$engine" run --rm "${ca_args[@]}" \
         -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
         -v "$root:/work" -w /work \
         "$(sh scripts/ci/desktop-image.sh)" \

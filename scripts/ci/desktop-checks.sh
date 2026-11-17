@@ -27,7 +27,10 @@ if [[ "${1:-}" == --install-deps ]]; then
     apt-get update -y >"$reports/desktop-deps.log" 2>&1 \
         && apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config git ca-certificates clang-format python3 \
-            qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite libsqlite3-dev >>"$reports/desktop-deps.log" 2>&1 \
+            qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite libsqlite3-dev \
+            python3-pip openssl >>"$reports/desktop-deps.log" 2>&1 \
+        && python3 -m pip install --quiet --break-system-packages \
+            -r tools/mock-bookorbit/requirements.txt >>"$reports/desktop-deps.log" 2>&1 \
         || { echo "Installing dependencies failed; see $reports/desktop-deps.log" >&2; exit 1; }
     # The checkout may belong to another user when mounted into the container.
     git config --global --add safe.directory "$root" 2>/dev/null || true
@@ -65,6 +68,7 @@ if [[ $configured -eq 1 ]] && run_step build "Build" cmake --build "$build_dir";
 fi
 if [[ $built -eq 1 ]]; then
     run_step tests "Tests (ctest)" ctest --test-dir "$build_dir" --output-on-failure \
+        --test-output-size-passed 262144 --test-output-size-failed 262144 \
         --output-junit "$root/$reports/ctest-junit.xml"
 fi
 
