@@ -1,6 +1,13 @@
-# Owned by task 12 (see docs/tasks/). Add sources to SOURCES; the scaffold
-# stub can go once real code is here.
+# Owned by task 12 (docs/tasks/12-crash-safety.md). Crash safety: startup
+# marker, two-strike recovery, switch files, readiness timeout, sleep
+# watchdog, wait-for-Nickel and the uninstall cleanup.
 smalt_add_module(smalt_safety
     SOURCES
-        safety_stub.cpp
+        clock.h
+        clock.cpp
+        safety_internal.h
+        safety.cpp
+        sleep_watchdog.cpp
+        nickel_ready.h
+        nickel_ready.cpp
     DEPS Qt5::Core)
