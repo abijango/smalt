@@ -15,6 +15,7 @@ One cloud session per wave. That session is the **orchestrator**: it runs the wa
 | 20 recorder | opus | Hooks, timing order at sleep, clocks |
 | 21 sync engine | opus | Concurrency, Wi-Fi state, retries |
 | 22 screens | sonnet | Built from the kit |
+| 23 stats | sonnet | Pure aggregation plus screens, well tested |
 | 30 home takeover | opus | Hooking Nickel's home with fallbacks |
 | 31 jump prompt | sonnet | Contained |
 | 32 highlights | sonnet | Contained, strict read-only rule |

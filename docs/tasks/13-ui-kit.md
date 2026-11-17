@@ -32,3 +32,8 @@ Visual design (all), UX details and copy (E Ink rules), Large-library UX. Mockup
 - Palette swap replaces every teal use with the monochrome mapping.
 - Millimetre conversion gives identical physical sizes on 6" and 7" profiles.
 - Screenshot tests of each component in both palettes.
+
+## Addendum (added during wave 1)
+
+- The tab bar has five tabs on every device: Home, Library, Series, Stats, More. Shelves moves under More on the Libra too.
+- Add the heatmap colour steps to the tokens: colour `#ECECEC`, `#C9DCD8`, `#93B6B0`, `#5E8C86`, `#3E6F6A`; monochrome `#ECECEC`, `#C4C4C4`, `#8E8E8E`, `#5A5A5A`, `#111111`. The chart components themselves are built by task 23.

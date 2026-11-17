@@ -10,7 +10,7 @@ It does three things:
 
 ## Status
 
-Design complete. Wave 0 (scaffold: build system, Kobo packaging, shared interfaces) is in place; the features come in later waves. The full design is in [`docs/SPEC.md`](docs/SPEC.md), and build instructions are in [`BUILDING.md`](BUILDING.md).
+Design complete, build not started. The full design is in [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Targets
 
@@ -29,12 +29,6 @@ Qt 6 firmware (5.x and 6.x) comes later.
 | `docs/SPEC.md` | The design spec: source of truth |
 | `docs/VERIFY.md` | On-device checks to run before wave 2 |
 | `docs/tasks/` | One brief per build task, grouped in waves |
-| `BUILDING.md` | Desktop and Kobo builds, and the Qt 5.2 limits for on-device code |
-| `include/smalt/` | Shared interfaces between modules |
-| `src/`, `tests/` | Modules and their tests, one folder per build task |
-| `packaging/` | The `.adds/bookorbit/` files and the `KoboRoot.tgz` packaging |
-| `toolchains/` | Kobo toolchain pin and vendored NickelHook |
-| `build-kobo.sh` | Builds `out/KoboRoot.tgz` |
 | `scripts/cloud-setup.sh` | Setup script for Claude Code cloud environments |
 
 ## Not affiliated

@@ -45,6 +45,7 @@ Created by task 00 (scaffold). Each later task owns one area.
 | `src/recorder/` | Session capture | 20 |
 | `src/sync/` | Sync engine, triggers, Wi-Fi control, conflict rules | 21 |
 | `src/ui/screens/` | Home, Library, Series, Search, Book detail, More | 22 |
+| `src/stats/`, `src/ui/screens/stats/`, `src/bookorbit/dashboard.*` | Stats aggregation, dashboard parsing, Stats screens and the book detail "Your reading" section | 23 |
 | `src/features/` | Jump prompt, highlights, collections, status, removals, migration | 31–34 |
 | `tests/` | Unit and integration tests, mirroring `src/` | Same as the code under test |
 | `tools/mock-bookorbit/` | Mock BookOrbit server for tests | 11 |

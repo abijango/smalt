@@ -39,3 +39,10 @@ On-device data model (all), Crash safety (Ledger protection), Sync engine (Order
 - Outbox survives a simulated crash mid-batch with nothing lost.
 - Backup rotation keeps 7 files.
 - Sessions under 10 seconds are rejected at insert.
+
+## Addendum (added during wave 1)
+
+Read-only queries the Stats task (23) needs, exposed through `include/smalt/ledger.h` (propose the additions in the PR):
+- Sessions in a time range (start, end, active seconds, book, start and end page), ordered by start.
+- Sessions for one book, newest first, with a limit.
+- Whether each session has been confirmed by the server, so Stats can merge only unconfirmed minutes into the server heatmap.
