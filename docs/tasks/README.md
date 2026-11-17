@@ -11,6 +11,7 @@ Each file here is a brief for one Claude Code cloud session. Sessions in the sam
 | 2 | `20-recorder`, `21-sync-engine`, `22-screens` | Yes | Wave 1 merged (verification answers are in `docs/VERIFY-FINDINGS.md`) |
 | 3 | `30-home-takeover`, `31-jump-prompt`, `32-highlights`, `33-collections-status-removals` | Yes | Wave 2 merged and tested on the device |
 | 3b | `34-migration` | No | Wave 3 working on the device |
+| 4 (proposed) | `40-web-installer` | No | Wave 3 working on the device, and the maintainer approving the brief and its proposed spec section |
 
 ## Running a wave
 

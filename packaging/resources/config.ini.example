@@ -1,0 +1,19 @@
+; Smalt configuration.
+;
+; Copy this file to config.ini in the same folder (.adds/bookorbit/) and fill
+; it in. config.ini holds your login: never share it or commit it anywhere.
+;
+; Smalt talks to BookOrbit with the KOReader login, using the protocol
+; BookOrbit's own KOReader plugin uses. Find it in BookOrbit under
+; Settings > KOReader.
+
+[server]
+; Your BookOrbit server, without a path. Example: https://books.example.com
+url =
+
+[koreader]
+; KOReader username from BookOrbit's Settings > KOReader.
+username =
+; KOReader password from the same page. Smalt sends only its MD5 hash
+; (the x-auth-key header), as the KOReader plugin does.
+password =
