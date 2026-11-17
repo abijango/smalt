@@ -7,10 +7,10 @@ set(SMALT_KIT_DEFS
     SMALT_KIT_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     SMALT_KIT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
 
-smalt_add_qtest(ui_kit.palette SOURCES tst_palette.cpp DEPS smalt_ui_kit)
-smalt_add_qtest(ui_kit.scaling SOURCES tst_scaling.cpp DEPS smalt_ui_kit)
-smalt_add_qtest(ui_kit.rules SOURCES tst_rules.cpp DEPS smalt_ui_kit)
-smalt_add_qtest(ui_kit.screenshots SOURCES tst_screenshots.cpp DEPS smalt_ui_kit)
+smalt_add_qtest(ui_kit.palette SOURCES tst_palette.cpp DEPS smalt_ui_kit_gallery)
+smalt_add_qtest(ui_kit.scaling SOURCES tst_scaling.cpp DEPS smalt_ui_kit_gallery)
+smalt_add_qtest(ui_kit.rules SOURCES tst_rules.cpp DEPS smalt_ui_kit_gallery)
+smalt_add_qtest(ui_kit.screenshots SOURCES tst_screenshots.cpp DEPS smalt_ui_kit_gallery)
 
 if(SMALT_TARGET STREQUAL "desktop")
     foreach(t palette scaling rules screenshots)
