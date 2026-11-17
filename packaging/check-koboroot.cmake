@@ -1,34 +1,59 @@
-# Checks the layout of a KoboRoot.tgz. Run with cmake -P:
-#   cmake -DARCHIVE=<KoboRoot.tgz> -P check-koboroot.cmake
-# Used by the desktop test packaging.koboroot_layout and by build-kobo.sh.
-if(NOT EXISTS "${ARCHIVE}")
-    message(FATAL_ERROR "No archive at ${ARCHIVE}")
-endif()
-find_program(SMALT_TAR NAMES tar REQUIRED)
-execute_process(COMMAND "${SMALT_TAR}" -tzvf "${ARCHIVE}"
-    OUTPUT_VARIABLE listing RESULT_VARIABLE result)
-if(NOT result EQUAL 0)
-    message(FATAL_ERROR "Cannot list ${ARCHIVE}")
-endif()
-
-set(required
-    "usr/local/Kobo/imageformats/libsmalt.so"
-    "mnt/onboard/.adds/bookorbit/uninstall"
-    "mnt/onboard/.adds/bookorbit/config.ini.example"
-    "mnt/onboard/.adds/bookorbit/certs/ca-bundle.pem")
-foreach(member IN LISTS required)
-    string(FIND "${listing}" " ${member}\n" found)
-    if(found EQUAL -1)
-        message(FATAL_ERROR "KoboRoot.tgz is missing ${member}\n${listing}")
+# Checks the Kobo packages. Run with cmake -P:
+#   cmake -DOUTDIR=<dir with KoboRoot.tgz and Smalt-qt5.zip> -P check-koboroot.cmake
+# Used by the desktop test packaging.layout and by the Kobo build.
+get_filename_component(OUTDIR "${OUTDIR}" ABSOLUTE)
+set(koboroot "${OUTDIR}/KoboRoot.tgz")
+set(zip "${OUTDIR}/Smalt-qt5.zip")
+foreach(file "${koboroot}" "${zip}")
+    if(NOT EXISTS "${file}")
+        message(FATAL_ERROR "Missing ${file}")
     endif()
 endforeach()
-if(listing MATCHES "config\\.ini\n")
-    message(FATAL_ERROR "KoboRoot.tgz must not contain config.ini")
+
+# KoboRoot.tgz: only the library, owned by root.
+find_program(SMALT_TAR NAMES tar REQUIRED)
+execute_process(COMMAND "${SMALT_TAR}" -tzvf "${koboroot}" OUTPUT_VARIABLE listing RESULT_VARIABLE result)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "Cannot list ${koboroot}")
+endif()
+string(FIND "${listing}" " usr/local/Kobo/imageformats/libsmalt.so\n" found)
+if(found EQUAL -1)
+    message(FATAL_ERROR "KoboRoot.tgz is missing usr/local/Kobo/imageformats/libsmalt.so\n${listing}")
 endif()
 string(REPLACE "\n" ";" lines "${listing}")
 foreach(line IN LISTS lines)
-    if(line AND NOT line MATCHES " (0/0|root/root) ")
+    if(NOT line)
+        continue()
+    endif()
+    if(NOT line MATCHES " (0/0|root/root) ")
         message(FATAL_ERROR "KoboRoot.tgz members must be owned by root (uid 0, gid 0): ${line}")
     endif()
+    if(NOT line MATCHES " usr/(local/(Kobo/(imageformats/(libsmalt\\.so)?)?)?)?$")
+        message(FATAL_ERROR "KoboRoot.tgz must contain only the library: ${line}")
+    endif()
 endforeach()
-message(STATUS "KoboRoot.tgz layout OK")
+
+# Smalt-qt5.zip: the system package plus the .adds/bookorbit files, no login.
+set(unpacked "${OUTDIR}/check-zip")
+file(REMOVE_RECURSE "${unpacked}")
+file(MAKE_DIRECTORY "${unpacked}")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E tar xf "${zip}" WORKING_DIRECTORY "${unpacked}" RESULT_VARIABLE result)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "Cannot extract ${zip}")
+endif()
+foreach(member ".kobo/KoboRoot.tgz" ".adds/bookorbit/certs/ca-bundle.pem")
+    if(NOT EXISTS "${unpacked}/${member}")
+        message(FATAL_ERROR "Smalt-qt5.zip is missing ${member}")
+    endif()
+endforeach()
+file(SHA256 "${koboroot}" expected)
+file(SHA256 "${unpacked}/.kobo/KoboRoot.tgz" actual)
+if(NOT expected STREQUAL actual)
+    message(FATAL_ERROR "Smalt-qt5.zip holds a different KoboRoot.tgz")
+endif()
+file(GLOB_RECURSE logins "${unpacked}/*config.ini")
+if(logins)
+    message(FATAL_ERROR "Smalt-qt5.zip must not contain config.ini")
+endif()
+file(REMOVE_RECURSE "${unpacked}")
+message(STATUS "Kobo packages OK")

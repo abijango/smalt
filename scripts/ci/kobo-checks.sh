@@ -3,12 +3,13 @@
 #
 #   scripts/ci/kobo-checks.sh [--skip-build]
 #
-# Builds out/KoboRoot.tgz with ./build-kobo.sh (inside the pinned kobuild Qt5
+# Builds out/KoboRoot.tgz and out/Smalt-qt5.zip with ./build-kobo.sh (inside the pinned kobuild Qt5
 # image), then checks the library that actually ships in the package:
 #   - 32-bit ARM, hard-float (Kobo Clara and Libra)
 #   - needs no newer glibc than firmware 4's 2.19, and no newer C++ runtime
 #     than its GCC 4.9 (GLIBCXX 3.4.20, CXXABI 1.3.8)
 #   - exports NickelHook's and Qt's plugin entry points
+#   - the uninstall marker it seeds on first load is embedded
 #   - package layout (packaging/check-koboroot.cmake)
 # Writes reports/kobo.md and reports/kobo-build.log. Exits non-zero on failure.
 set -uo pipefail
@@ -50,8 +51,8 @@ listing=""
 
 if [[ $built -eq 1 && -f "$package" ]] && tar -xzf "$package" -C "$work" 2>/dev/null; then
     listing=$(tar -tzvf "$package")
-    if cmake "-DARCHIVE=$package" -P packaging/check-koboroot.cmake >"$work/layout.log" 2>&1; then
-        pass "Package layout" "library and \`.adds/bookorbit/\` files present, owned by root, no \`config.ini\`"
+    if cmake "-DOUTDIR=out" -P packaging/check-koboroot.cmake >"$work/layout.log" 2>&1; then
+        pass "Package layout" "\`KoboRoot.tgz\` holds only the library (root-owned); \`Smalt-qt5.zip\` holds it plus \`.adds/bookorbit/\`, no \`config.ini\`"
     else
         fail "Package layout" "$(grep -m1 -i error -A2 "$work/layout.log" | tr '\n' ' ' | cut -c1-200)"
     fi
@@ -91,6 +92,12 @@ if [[ $built -eq 1 && -f "$package" ]] && tar -xzf "$package" -C "$work" 2>/dev/
             fail "Entry points" "missing: ${missing[*]}"
         fi
 
+        if grep -qa "To uninstall Smalt, delete this file" "$lib"; then
+            pass "First-load files" "\`uninstall\` marker and \`config.ini.example\` embedded; seeded before NickelHook's uninstall check"
+        else
+            fail "First-load files" "the \`uninstall\` marker is not embedded, so a fresh install would remove itself"
+        fi
+
         needed=$(readelf -d "$lib" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')
         size=$(stat -c %s "$lib")
     else
@@ -118,8 +125,17 @@ fi
         echo
         echo "<details><summary>Package contents</summary>"
         echo
+        echo '`KoboRoot.tgz` (extracted at `/` by the Kobo):'
+        echo
         echo '```'
         awk '{print $1, $3, $6}' <<<"$listing"
+        echo '```'
+        echo
+        echo '`Smalt-qt5.zip` (copied to the Kobo drive as is):'
+        echo
+        echo '```'
+        python3 -I -c 'import sys, zipfile
+for i in zipfile.ZipFile(sys.argv[1]).infolist(): print(i.file_size, i.filename)' out/Smalt-qt5.zip 2>&1
         echo '```'
         echo "</details>"
     fi

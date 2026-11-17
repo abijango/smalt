@@ -38,7 +38,7 @@ done
         echo
     done
     echo "---"
-    echo "Device checks in the PR description still need a real Kobo. Download \`KoboRoot\` from the run's artifacts to install it."
+    echo "Device checks in the PR description still need a real Kobo. Download \`KoboRoot\` from the run's artifacts (\`KoboRoot.tgz\` and \`Smalt-qt5.zip\`) to install it."
 } >"$out"
 
 # GitHub comments are limited to 65,536 characters.

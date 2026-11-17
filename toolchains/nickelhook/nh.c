@@ -1,3 +1,21 @@
+// NickelHook for the Qt 6 line of Kobo firmware (5.x). Copied from
+// pgaskin/NickelHook at 3b1b655 (MIT, see LICENSE). This file needs no Qt;
+// the changes here are log fixes found while reading the 5.18 syslog:
+// - the dlhook DT_DYNAMIC line printed garbage on 32-bit ARM, because
+//   Elf32_Xword is 64 bits wide and went through %lu; the values are cast now
+//   and the -Wformat suppression is gone
+// - nh_dump_log wrote the year since 1900 and a zero-based month
+// and one change in behaviour: the failsafe parks the library in the parent
+// directory of the plugin directory instead of renaming it in place. Qt 6
+// probes every file in a plugin directory, whatever its name, so a copy
+// named libnm.so.failsafe next to the original was loaded again on 5.18 and
+// a reinstall could not bring the mod back until that file was deleted.
+// - nh_dump_log logs when logread fails instead of ignoring the result, which
+//   the fortified glibc headers of the toolchain flag under -Werror
+// - preserve an existing external GOT hook as the next function in the chain
+// - NH_NO_LOGGING omits messages and failure log dumps for production mods
+// - failed initialization restores hooks in their original libraries
+// - failed failsafe thread creation leaves the library disabled for next boot
 #define _GNU_SOURCE // RTLD_DEFAULT, Dl_info, dladdr
 #include <dlfcn.h>
 #include <elf.h>
@@ -23,6 +41,8 @@
 // --- private api
 
 extern const struct nh NickelHook;
+extern void nh_resources_uninstalled(void) __attribute__((weak, visibility("hidden")));
+extern bool nh_startup_failed(void) __attribute__((weak, visibility("hidden")));
 
 // nh_init is the main entry point for NickelHook which sets up the mod
 // according to the information in the external NickelHook struct and handles
@@ -33,29 +53,19 @@ extern const struct nh NickelHook;
 __attribute__((visibility("hidden"))) __attribute__((constructor)) void nh_init();
 
 // nh_dlhook takes a lib handle from dlopen and redirects the specified symbol
-// to another, returning a pointer to the original one. Only calls from within
-// that library itself are affected (because it replaces that library's GOT).
+// to another, returning the previous external hook or the original function.
+// Only calls from that library are affected (it replaces that library's GOT).
 // This function requires glibc and Linux. It should work on any architecture,
 // and it should be resilient to most errors. If it fails, no changes will have
 // been made, NULL is returned and the error is logged with nh_log.
 __attribute__((visibility("hidden"))) void *nh_dlhook(void *handle, const char *symname, void *target);
 
-// Get the handle for the library whose PLT a hook targets. libnickel is kept
-// open for the whole initialization path; other libraries are opened by name.
-// Use this for both applying and restoring hooks so rollback edits the same
-// library selected by nh_hook.lib.
-static void *nh_hook_lib(const char *name, void *libnickel) {
-    if (!strcmp(name, "libnickel.so.1.0.0") ||
-        !strcmp(name, "/usr/local/Kobo/libnickel.so.1.0.0"))
-        return libnickel;
-    return dlopen(name, RTLD_LAZY|RTLD_LOCAL);
-}
-
 // nh_failsafe_t is a failsafe mechanism for injected shared libraries. It
-// works by moving it to a temporary file (so it won't get loaded the next time)
-// and dlopening itself (to prevent it from being unloaded if it is dlclose'd by
-// whatever dlopen'd it). When it is disarmed, the library is moved back to its
-// original location.
+// works by moving it to a temporary file in the parent directory (so it won't
+// get loaded the next time; Qt 6 loads any file in a plugin directory, so a
+// new name in the same directory is not enough) and dlopening itself (to
+// prevent it from being unloaded if it is dlclose'd by whatever dlopen'd it).
+// When it is disarmed, the library is moved back to its original location.
 typedef struct nh_failsafe_t nh_failsafe_t;
 
 // nh_failsafe_create allocates and arms a failsafe mechanism for the currently
@@ -99,6 +109,13 @@ void nh_init() {
     }
 
     nh_log("(NickelHook) checking config");
+
+    if (nh_startup_failed && nh_startup_failed()) {
+        nh_log("(NickelHook) repeated interrupted startup; uninstalling");
+        nh_failsafe_uninstall(fs);
+        if (nh->uninstall && !nh->uninstall()) nh_dump_log();
+        goto nh_init_return_no_fs;
+    }
 
     for (struct nh_dlsym *v = nh->dlsym; v && v->name; v++) {
         if (!v->out) {
@@ -175,14 +192,16 @@ void nh_init() {
 
         *v->out = NULL;
 
-        void *lib = nh_hook_lib(v->lib, libnickel);
-        if (!lib) {
-            if (!v->optional) {
-                nh_log("(NickelHook) ... fatal: could not load lib: %s", dlerror());
-                goto nh_init_return_err_rhook;
+        void *lib = libnickel;
+        if (!(!strcmp(v->lib, "libnickel.so.1.0.0") || !strcmp(v->lib, "/usr/local/Kobo/libnickel.so.1.0.0"))) {
+            if (!(lib = dlopen(v->lib, RTLD_LAZY|RTLD_LOCAL))) {
+                if (!v->optional) {
+                    nh_log("(NickelHook) ... fatal: could not load lib: %s", dlerror());
+                    goto nh_init_return_err_rhook;
+                }
+                nh_log("(NickelHook) ... info: could not load lib: %s, is optional so ignoring", dlerror());
+                continue;
             }
-            nh_log("(NickelHook) ... info: could not load lib: %s, is optional so ignoring", dlerror());
-            continue;
         }
 
         void *target = dlsym(self, v->sym_new);
@@ -223,15 +242,17 @@ void nh_init() {
 nh_init_return_err_rhook:
     if (e) {
         nh_log("(NickelHook) info: restoring hooks");
-        for (struct nh_hook *v = e; v >= nh->hook; v--) {
+        for (struct nh_hook *v = e + 1; v != nh->hook;) {
+            --v;
             nh_log("(NickelHook) info: restoring hook on ('%s', '%s') from (self, '%s') to %p", v->lib, v->sym, v->sym_new, *v->out); // out will have been previously set to the original func
             if (*v->out) {
-                void *lib = nh_hook_lib(v->lib, libnickel);
-                if (!lib) {
-                    nh_log("(NickelHook) ... warning: could not load '%s' to restore '%s': %s", v->lib, v->sym, dlerror());
-                } else if (!nh_dlhook(lib, v->sym, *v->out)) {
-                    nh_log("(NickelHook) ... warning: failed to restore hook on ('%s', '%s')", v->lib, v->sym);
+                // The same symbol can have different previous hooks in each
+                // library. Restore only the library we changed during setup.
+                void *lib = dlopen(v->lib, RTLD_LAZY|RTLD_LOCAL);
+                if (!lib || !nh_dlhook(lib, v->sym, *v->out)) {
+                    nh_log("(NickelHook) ... warning: failed to restore hook");
                 }
+                if (lib) dlclose(lib);
             } else {
                 nh_log("(NickelHook) ... warning: failed to restore hook: original should have been set, but it was null");
             }
@@ -257,6 +278,7 @@ nh_init_return_no_fs:
 
 // --- log
 
+#ifndef NH_NO_LOGGING
 void nh_log(const char *fmt, ...) {
     static __thread char buf[256] = {0};
     int n;
@@ -275,20 +297,21 @@ void nh_log(const char *fmt, ...) {
     syslog(LOG_DEBUG, "%s", buf);
 }
 
+#endif
+
 void nh_dump_log() {
+#ifndef NH_NO_LOGGING
     char cmd[PATH_MAX];
     time_t t = time(NULL);
     struct tm *l = localtime(&t);
-    if (!l || snprintf(cmd, sizeof(cmd), "logread > '/mnt/onboard/%s_%d-%02d-%02d_%02d-%02d-%02d.log'", NickelHook.info->name ?: "NickelHook", l->tm_year, l->tm_mon, l->tm_mday, l->tm_hour, l->tm_min, l->tm_sec) < 0)
+    if (!l || snprintf(cmd, sizeof(cmd), "logread > '/mnt/onboard/%s_%d-%02d-%02d_%02d-%02d-%02d.log'", NickelHook.info->name ?: "NickelHook", l->tm_year + 1900, l->tm_mon + 1, l->tm_mday, l->tm_hour, l->tm_min, l->tm_sec) < 0)
         strcpy(cmd, "logread > '/mnt/onboard/NickelHook.log'");
-    system(cmd);
+    if (system(cmd))
+        nh_log("(NickelHook) warning: could not dump the log with logread");
+#endif
 }
 
 // --- dlhook
-
-// prevent GCC from giving us warnings everywhere about the format specifiers for the ELF typedefs
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat"
 
 #ifndef ELFW
 #define ELFW(type) _ElfW(ELF, __ELF_NATIVE_CLASS, type)
@@ -317,7 +340,7 @@ void *nh_dlhook(void *handle, const char *symname, void *target) {
     // the link_map conveniently gives use the base address without /proc/maps, and it gives us a pointer to dyn
     struct link_map *lm;
     NH_DLHOOK_CHECK(!dlinfo(handle, RTLD_DI_LINKMAP, &lm), "could not get link_map for lib");
-    nh_log("(NickelHook) ... dlhook: info: lib %s is mapped at %lx", lm->l_name, lm->l_addr);
+    nh_log("(NickelHook) ... dlhook: info: lib %s is mapped at %lx", lm->l_name, (unsigned long)(lm->l_addr));
 
     // stuff extracted from DT_DYNAMIC
     struct {
@@ -345,10 +368,10 @@ void *nh_dlhook(void *handle, const char *symname, void *target) {
         case DT_STRTAB:   dyn.str         = (const char*)(lm->l_ld[i].d_un.d_val);      break; // .dynstr  - offset
         }
     }
-    nh_log("(NickelHook) ... dlhook: info: DT_DYNAMIC: plt_is_rela=%d plt=%p plt_sz=%lu plt_ent_sz=%lu sym=%p str=%p", dyn.plt_is_rela, (void*)(dyn.plt)._, dyn.plt_sz, dyn.plt_ent_sz, dyn.sym, dyn.str);
+    nh_log("(NickelHook) ... dlhook: info: DT_DYNAMIC: plt_is_rela=%d plt=%p plt_sz=%lu plt_ent_sz=%lu sym=%p str=%p", dyn.plt_is_rela, (void*)(dyn.plt)._, (unsigned long)(dyn.plt_sz), (unsigned long)(dyn.plt_ent_sz), (void*)(dyn.sym), (const void*)(dyn.str));
     NH_DLHOOK_CHECK(dyn.plt_ent_sz, "plt_ent_sz is zero");
     NH_DLHOOK_CHECK(dyn.plt_sz%dyn.plt_ent_sz == 0, ".rel.plt length is not a multiple of plt_ent_sz");
-    NH_DLHOOK_CHECK((dyn.plt_is_rela ? sizeof(*dyn.plt.rela) : sizeof(*dyn.plt.rel)) == dyn.plt_ent_sz, "size mismatch (%lu != %lu)", dyn.plt_is_rela ? sizeof(*dyn.plt.rela) : sizeof(*dyn.plt.rel), dyn.plt_ent_sz);
+    NH_DLHOOK_CHECK((dyn.plt_is_rela ? sizeof(*dyn.plt.rela) : sizeof(*dyn.plt.rel)) == dyn.plt_ent_sz, "size mismatch (%lu != %lu)", (unsigned long)(dyn.plt_is_rela ? sizeof(*dyn.plt.rela) : sizeof(*dyn.plt.rel)), (unsigned long)(dyn.plt_ent_sz));
 
     // parse the dynamic symbol table, resolve symbols to relocations, then GOT entries
     for (size_t i = 0; i < dyn.plt_sz/dyn.plt_ent_sz; i++) {
@@ -356,7 +379,7 @@ void *nh_dlhook(void *handle, const char *symname, void *target) {
         ElfW(Rel) *rel = dyn.plt_is_rela
             ? (ElfW(Rel)*)(&dyn.plt.rela[i])
             : &dyn.plt.rel[i];
-        NH_DLHOOK_CHECK(ELFW(R_TYPE)(rel->r_info) == R_JUMP_SLOT, "not a jump slot relocation (R_TYPE=%lu)", ELFW(R_TYPE)(rel->r_info));
+        NH_DLHOOK_CHECK(ELFW(R_TYPE)(rel->r_info) == R_JUMP_SLOT, "not a jump slot relocation (R_TYPE=%lu)", (unsigned long)(ELFW(R_TYPE)(rel->r_info)));
 
         ElfW(Sym) *sym = &dyn.sym[ELFW(R_SYM)(rel->r_info)];
         const char *str = &dyn.str[sym->st_name];
@@ -367,12 +390,30 @@ void *nh_dlhook(void *handle, const char *symname, void *target) {
         nh_log("(NickelHook) ... dlhook: info: found symbol %s (gotoff=%p [mapped=%p])", str, (void*)(rel->r_offset), gotoff);
 
         NH_DLHOOK_CHECK(ELFW(ST_TYPE)(sym->st_info) != STT_GNU_IFUNC, "STT_GNU_IFUNC not implemented (gotoff=%p)", (void*)(rel->r_offset));
-        NH_DLHOOK_CHECK(ELFW(ST_TYPE)(sym->st_info) == STT_FUNC, "not a function symbol (ST_TYPE=%d) (gotoff=%p)", ELFW(ST_TYPE)(sym->st_info), (void*)(rel->r_offset));
-        NH_DLHOOK_CHECK(ELFW(ST_BIND)(sym->st_info) == STB_GLOBAL, "not a globally bound symbol (ST_BIND=%d) (gotoff=%p)", ELFW(ST_BIND)(sym->st_info), (void*)(rel->r_offset));
+        NH_DLHOOK_CHECK(ELFW(ST_TYPE)(sym->st_info) == STT_FUNC, "not a function symbol (ST_TYPE=%d) (gotoff=%p)", (int)(ELFW(ST_TYPE)(sym->st_info)), (void*)(rel->r_offset));
+        NH_DLHOOK_CHECK(ELFW(ST_BIND)(sym->st_info) == STB_GLOBAL, "not a globally bound symbol (ST_BIND=%d) (gotoff=%p)", (int)(ELFW(ST_BIND)(sym->st_info)), (void*)(rel->r_offset));
 
-        nh_log("(NickelHook) ... dlhook: info: ensuring the symbol is loaded (to get the original address)");
+        nh_log("(NickelHook) ... dlhook: info: resolving the original symbol");
         void *orig = dlsym(handle, symname);
         NH_DLHOOK_CHECK(orig, "could not dlsym symbol");
+        NH_DLHOOK_CHECK(*gotoff != target, "target is already installed");
+
+        // dlsym does not resolve a lazy GOT slot or report another mod's hook.
+        // ARM and x86-64 lazy slots point into the calling library's PLT.
+        // Resolve lazy slots in the global scope first to retain LD_PRELOAD
+        // interposers. A handle-only lookup can skip those. Already resolved
+        // external slots must keep their current target, including other mods.
+        Dl_info previous;
+        if (*gotoff != orig && dladdr(*gotoff, &previous)) {
+            if (previous.dli_fbase != (void *)lm->l_addr) {
+                orig = *gotoff;
+                nh_log("(NickelHook) ... dlhook: info: preserving previous hook %p in %s", orig, previous.dli_fname);
+            } else {
+                void *global = dlsym(RTLD_DEFAULT, symname);
+                if (global) orig = global;
+            }
+        }
+        NH_DLHOOK_CHECK(orig != target, "target would call itself");
 
         // remove memory protection (to bypass RELRO if it is enabled)
         // note: this doesn't seem to be used on the Kobo, but we might as well stay on the safe side (plus, I test this on my local machine too)
@@ -386,7 +427,6 @@ void *nh_dlhook(void *handle, const char *symname, void *target) {
 
         // replace the target offset
         nh_log("(NickelHook) ... dlhook: info: patching symbol");
-        //void *orig = *gotoff;
         *gotoff = target;
         nh_log("(NickelHook) ... dlhook: info: successfully patched symbol %s (orig=%p, new=%p)", str, orig, target);
 
@@ -398,8 +438,6 @@ void *nh_dlhook(void *handle, const char *symname, void *target) {
 
     #undef NH_DLHOOK_CHECK
 }
-
-#pragma GCC diagnostic pop
 
 // --- failsafe
 
@@ -429,7 +467,14 @@ nh_failsafe_t *nh_failsafe_create() {
     char *d = strrchr(info.dli_fname, '.');
     NH_FAILSAFE_CHECK(!(d && !strcmp(d, ".failsafe")), "lib was loaded from the failsafe for some reason");
     NH_FAILSAFE_CHECK(realpath(info.dli_fname, fs->orig), "could not resolve %s", info.dli_fname);
-    NH_FAILSAFE_CHECK(snprintf(fs->tmp, sizeof(fs->tmp), "%s.failsafe", fs->orig) >= 0, "could not generate temp filename");
+
+    // /usr/local/Kobo/imageformats/libnm.so becomes /usr/local/Kobo/libnm.so.failsafe:
+    // one directory up, where no plugin loader looks, on the same filesystem so rename works.
+    const char *base = strrchr(fs->orig, '/');
+    NH_FAILSAFE_CHECK(base && base != fs->orig, "own path %s has no parent directory", fs->orig);
+    const char *parent = memrchr(fs->orig, '/', base - fs->orig);
+    NH_FAILSAFE_CHECK(parent, "own path %s has no parent directory", fs->orig);
+    NH_FAILSAFE_CHECK(snprintf(fs->tmp, sizeof(fs->tmp), "%.*s%s.failsafe", (int)(parent - fs->orig + 1), fs->orig, base + 1) < (int)(sizeof(fs->tmp)), "could not generate temp filename");
 
     nh_log("(NickelHook) ... failsafe: info: ensuring own lib remains in memory even if it is dlclosed after being loaded with a dlopen");
     NH_FAILSAFE_CHECK((fs->self = dlopen(fs->orig, RTLD_LAZY|RTLD_NODELETE)), "could not dlopen self");
@@ -466,18 +511,28 @@ void nh_failsafe_destroy(nh_failsafe_t *fs, int delay) {
     fs->delay = delay;
     nh_log("(NickelHook) ... failsafe: info: scheduling restore");
     pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_t t;
-    pthread_create(&t, &attr, _nh_failsafe_destroy, fs);
-    const char name[16] = "nh_failsafe";
-    pthread_setname_np(t, name);
-    pthread_attr_destroy(&attr);
+    int error = pthread_attr_init(&attr);
+    if (!error) {
+        error = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        pthread_t t;
+        if (!error) error = pthread_create(&t, &attr, _nh_failsafe_destroy, fs);
+        if (!error) {
+            const char name[16] = "nh_failsafe";
+            pthread_setname_np(t, name);
+        }
+        pthread_attr_destroy(&attr);
+    }
+    if (error) {
+        // Do not restore the plugin without its startup grace period. Keep the
+        // failsafe armed so the next startup omits this plugin.
+        nh_log("(NickelHook) ... failsafe: cannot schedule restore: %s; library remains disabled", strerror(error));
+        free(fs);
+    }
 }
 
 void nh_failsafe_uninstall(nh_failsafe_t *fs) {
     nh_log("(NickelHook) ... failsafe: info: deleting %s", fs->tmp);
-    unlink(fs->tmp);
+    if (unlink(fs->tmp) == 0 && nh_resources_uninstalled) nh_resources_uninstalled();
 }
 
 // --- File/directory deletion

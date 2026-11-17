@@ -7,7 +7,9 @@
 //
 // Uninstall (SPEC, Crash safety, "Uninstall"): NickelHook removes the mod
 // when .adds/bookorbit/uninstall is missing at startup (uninstall_xflag).
-// The ledger, its backups and the logs stay on the device.
+// install.c seeds that marker on the first load after an install, before this
+// check runs, so a fresh install never removes itself. The ledger, its
+// backups and the logs stay on the device.
 //
 // Rules here: no exceptions across this boundary, nothing that blocks
 // Nickel's startup, nothing that waits on Wi-Fi or the server.

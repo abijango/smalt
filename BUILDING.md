@@ -16,16 +16,22 @@ Needs CMake 3.22+, Ninja and the system Qt 5 (`qtbase5-dev`); `scripts/cloud-set
 ./build-kobo.sh
 ```
 
-This produces `out/KoboRoot.tgz`. It runs CMake inside the prepared kobuild Qt5 image pinned in `toolchains/sdk-image.sh` (the same image Kobalt builds with), using Docker or Podman, so it needs network access to `ghcr.io` and `pkg-containers.githubusercontent.com` the first time. Inside that image it runs CMake directly.
+This produces `out/KoboRoot.tgz` and `out/Smalt-qt5.zip`. It runs CMake inside the prepared kobuild Qt5 image pinned in `toolchains/sdk-image.sh` (the same image Kobalt builds with), using Docker or Podman, so it needs network access to `ghcr.io` and `pkg-containers.githubusercontent.com` the first time. Inside that image it runs CMake directly.
 
-Install: copy `KoboRoot.tgz` to `.kobo/` on the Kobo and eject. It contains:
+Install either way, then eject:
 
-| Path on the Kobo | What |
+- copy `KoboRoot.tgz` to `.kobo/` on the Kobo, or
+- unzip `Smalt-qt5.zip` onto the Kobo's drive (it holds `.kobo/KoboRoot.tgz` and the `.adds/bookorbit/` files), as Kobalt's ZIP works.
+
+| Path on the Kobo | Where it comes from |
 | --- | --- |
-| `/usr/local/Kobo/imageformats/libsmalt.so` | The NickelHook mod |
-| `/mnt/onboard/.adds/bookorbit/uninstall` | Delete it and restart to uninstall |
-| `/mnt/onboard/.adds/bookorbit/config.ini.example` | Copy to `config.ini` and fill in |
-| `/mnt/onboard/.adds/bookorbit/certs/ca-bundle.pem` | CA certificates (placeholder until task 11) |
+| `/usr/local/Kobo/imageformats/libsmalt.so` | `KoboRoot.tgz`, the only thing in it |
+| `.adds/bookorbit/uninstall` | Written by the library on its first load (delete it and restart to uninstall) |
+| `.adds/bookorbit/config.ini.example` | Written by the library on its first load; copy to `config.ini` and fill in |
+| `.adds/.bookorbit.initialized` | Receipt that those files were written once, so deleting `uninstall` uninstalls instead of being undone |
+| `.adds/bookorbit/certs/ca-bundle.pem` | `Smalt-qt5.zip` (placeholder until task 11) |
+
+The first-load files come from `packaging/resources/`, embedded into the library (`src/nickel/install.c`, Kobalt's `resources.c`). They are written before NickelHook checks for the `uninstall` marker, never replace an existing file, and are written again after an uninstall and reinstall. The desktop test `packaging.first_load_seeding` runs that sequence on a fake drive.
 
 ## Code that runs on the Kobo: Qt 5.2 and GCC 4.9's library
 

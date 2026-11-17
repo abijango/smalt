@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds libsmalt.so for Kobo firmware 4.x (Qt 5.2) and packages out/KoboRoot.tgz.
+# Builds libsmalt.so for Kobo firmware 4.x (Qt 5.2) and packages out/KoboRoot.tgz
+# (the library alone) and out/Smalt-qt5.zip (.kobo/KoboRoot.tgz plus .adds/bookorbit/).
 #
 #   ./build-kobo.sh            build in the pinned kobuild Qt5 image (Docker or Podman)
 #   ./build-kobo.sh --clean    remove build/kobo-qt5 first
@@ -24,7 +25,7 @@ clean=false
 for arg in "$@"; do
     case "$arg" in
         --clean) clean=true ;;
-        -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
         *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
     esac
 done
@@ -91,5 +92,5 @@ else
         smalt-build "$version" "$jobs"
 fi
 
-echo "Done: $root/out/KoboRoot.tgz"
-echo "Install: copy it to .kobo/ on the Kobo and eject."
+echo "Done: $root/out/KoboRoot.tgz and $root/out/Smalt-qt5.zip"
+echo "Install: copy KoboRoot.tgz to .kobo/ on the Kobo (or unzip Smalt-qt5.zip onto the drive) and eject."
