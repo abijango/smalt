@@ -7,8 +7,12 @@ cd "$root"
 mode=check
 [[ "${1:-}" == --fix ]] && mode=fix
 
-mapfile -t files < <(git ls-files -co --exclude-standard -- '*.h' '*.cpp' '*.c' \
-    | grep -v -E '^(toolchains/nickelhook/|build/|out/)' || true)
+# Tracked and new files that still exist (a deleted, not yet committed file is skipped).
+files=()
+while IFS= read -r f; do
+    if [[ -f "$f" ]]; then files+=("$f"); fi
+done < <(git ls-files -co --exclude-standard -- '*.h' '*.cpp' '*.c' \
+    | grep -v -E '^(toolchains/nickelhook/|build/|out/|\.claude/)' || true)
 if [[ ${#files[@]} -eq 0 ]]; then
     echo "No files to check"
     exit 0
