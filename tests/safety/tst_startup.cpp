@@ -256,19 +256,99 @@ private slots:
 
     void bootWithoutTakeoverResetsCount()
     {
-        // A crash, then a boot that never took over (for example with
-        // disable-home), then a crash: two crashes, but not in a row.
+        // A crash, then a boot that never takes over (disable-home) but
+        // finishes its startup when Nickel's home shows, then a crash: two
+        // crashes, but not in a row.
         crashedBoot();
         {
             StartupDecision d;
             std::unique_ptr<Safety> safety = boot(&d);
             QVERIFY(d.previousStartupCrashed);
+            QVERIFY(safety->clearStartupMarker(MarkerClearReason::FallbackToNickelHome).ok());
         }
         crashedBoot();
         const StartupDecision d = cleanBoot();
         QVERIFY(d.modActive);
         QVERIFY(d.previousStartupCrashed);
         QVERIFY(!d.recoveryTriggered);
+    }
+
+    void leftoverStrikeKeptDuringStartup()
+    {
+        crashedBoot();
+        StartupDecision d;
+        std::unique_ptr<Safety> safety = boot(&d);
+        QVERIFY(d.previousStartupCrashed);
+        // Strike one stays on disk from the start of this boot's startup.
+        QVERIFY(exists(m_paths->startupMarker()));
+        QVERIFY(readAll(m_paths->startupMarker()).contains("strikes=1"));
+        QVERIFY(safety->clearStartupMarker(MarkerClearReason::HomeDrawn).ok());
+        QVERIFY(!exists(m_paths->startupMarker()));
+    }
+
+    void crashBeforeMarkerWriteStillCounts()
+    {
+        crashedBoot();
+        {
+            // Dies after evaluateStartup(), before writeStartupMarker()
+            // (for example while waiting for Nickel or opening the ledger).
+            StartupDecision d;
+            std::unique_ptr<Safety> safety = boot(&d);
+            QVERIFY(d.modActive);
+            QVERIFY(d.previousStartupCrashed);
+        }
+        StartupDecision d;
+        boot(&d);
+        QVERIFY(d.recoveryTriggered);
+        QVERIFY(!d.modActive);
+        QVERIFY(exists(m_paths->disabledSwitch()));
+        QVERIFY(!exists(m_paths->startupMarker()));
+    }
+
+    void disableHomeStillWritesMarker()
+    {
+        // The marker covers the whole startup, so with disable-home it is
+        // still written and crashes still count.
+        QVERIFY(writeFile(m_paths->disableHomeSwitch(), QByteArray()));
+        {
+            StartupDecision d;
+            std::unique_ptr<Safety> safety = boot(&d);
+            QVERIFY(d.modActive);
+            QVERIFY(!d.homeTakeoverAllowed);
+            QVERIFY(safety->writeStartupMarker().ok());
+            QVERIFY(exists(m_paths->startupMarker()));
+        }
+        QVERIFY(crashedBoot().previousStartupCrashed);
+        StartupDecision d;
+        boot(&d);
+        QVERIFY(d.recoveryTriggered);
+    }
+
+    void noTakeoverBootEndedByReadinessTimeoutResets()
+    {
+        QVERIFY(writeFile(m_paths->disableHomeSwitch(), QByteArray()));
+        crashedBoot();
+        {
+            StartupDecision d;
+            std::unique_ptr<Safety> safety = boot(&d);
+            QVERIFY(d.previousStartupCrashed);
+            safety->startReadinessTimer(std::function<void()>());
+            m_clock->advance(smalt::kReadinessTimeoutMs);
+            QVERIFY(!exists(m_paths->startupMarker()));
+        }
+        const StartupDecision d = cleanBoot();
+        QVERIFY(d.modActive);
+        QVERIFY(!d.previousStartupCrashed);
+    }
+
+    void inertBootDropsLeftoverMarker()
+    {
+        QVERIFY(writeFile(m_paths->startupMarker(), QByteArray("strikes=0\n")));
+        QVERIFY(writeFile(m_paths->disabledSwitch(), QByteArray()));
+        StartupDecision d;
+        boot(&d);
+        QVERIFY(!d.modActive);
+        QVERIFY(!exists(m_paths->startupMarker()));
     }
 
     void readinessTimeoutIsNotAStrike()

@@ -3,15 +3,17 @@
 //
 // How the two strikes are counted. The marker holds `strikes=N`: how many
 // startups in a row before this one had already left the marker behind.
-// evaluateStartup() reads and removes a leftover marker (one more strike) and
-// remembers the count; writeStartupMarker() writes it back with that count;
-// clearStartupMarker() removes it once the startup finished. So:
+// evaluateStartup() reads a leftover marker (one more strike) and, when that
+// is strike one, rewrites it at once with strikes=1, so a crash anywhere in
+// this boot's startup still counts, even before writeStartupMarker().
+// writeStartupMarker() writes it with the same count; clearStartupMarker()
+// removes it once the startup finished (home drawn, Nickel's home shown with
+// disable-home, readiness timeout, clean shutdown or power-off). So:
 //   clean boot             no marker at the next boot          count 0
 //   crash during startup   marker strikes=0 at the next boot   count 1, logged
 //   crash again            marker strikes=1 at the next boot   count 2, recovery
-// A boot that doesn't reach writeStartupMarker() (disable-home, readiness
-// timeout first) didn't crash during a takeover, so it resets the count, the
-// same as Kobalt, where only startups in a row count.
+// A boot whose startup ends on a clear path, with or without a takeover,
+// resets the count: only startups in a row count, as with Kobalt.
 //
 // Two-strike recovery leaves the mod installed but inert: it writes
 // `disabled` (with the installed library's identity, so a reinstall is
@@ -135,6 +137,10 @@ public:
         return m_decision;
     }
 
+    // Allowed with `disable-home` too: the marker covers the mod's whole
+    // startup (hooks, recorder, ledger), not only the home takeover, so a
+    // crash there still counts towards recovery. Refused when the mod is
+    // inert or the readiness timeout has already ended this boot's startup.
     Status writeStartupMarker() override
     {
         if (!evaluateStartup().modActive)
@@ -143,9 +149,7 @@ public:
         if (m_timedOut)
             return Status::error(StatusCode::Unavailable,
                                  QStringLiteral("readiness timed out; no takeover this boot"));
-        const QByteArray content = QByteArray(kStrikesKey) + QByteArray::number(m_strikes) + '\n'
-                + "started=" + isoUtc(m_clock->nowUtc()).toUtf8() + '\n';
-        const Status status = writeFileAtomically(m_paths.startupMarker(), content);
+        const Status status = writeMarker();
         if (status.ok())
             log::info(kModule, QStringLiteral("startup marker written"));
         else
@@ -218,9 +222,23 @@ private:
 
     QString libraryIdentity() const { return m_libraryIdentity ? m_libraryIdentity() : QString(); }
 
-    // Reads and removes a leftover marker. Returns how many startups in a row
-    // have now failed to finish (0 when there was no marker).
-    int consumeLeftoverMarker()
+    Status writeMarker()
+    {
+        const QByteArray content = QByteArray(kStrikesKey) + QByteArray::number(m_strikes) + '\n'
+                + "started=" + isoUtc(m_clock->nowUtc()).toUtf8() + '\n';
+        return writeFileAtomically(m_paths.startupMarker(), content);
+    }
+
+    void removeLeftoverMarker()
+    {
+        const Status removed = removeIfPresent(m_paths.startupMarker());
+        if (!removed.ok())
+            log::error(kModule, QStringLiteral("leftover marker: %1").arg(removed.message));
+    }
+
+    // Reads a leftover marker without removing it. Returns how many startups
+    // in a row have now failed to finish (0 when there was no marker).
+    int readLeftoverMarker() const
     {
         const QString path = m_paths.startupMarker();
         if (!QFile::exists(path))
@@ -233,9 +251,6 @@ private:
             if (!ok || before < 0)
                 before = 0;
         }
-        const Status removed = removeIfPresent(path);
-        if (!removed.ok())
-            log::error(kModule, QStringLiteral("leftover marker: %1").arg(removed.message));
         // Anything above two already means recovery; keep the count small.
         return qMin(before, 1) + 1;
     }
@@ -255,10 +270,12 @@ private:
     StartupDecision decide()
     {
         StartupDecision d;
-        const int failedInRow = consumeLeftoverMarker();
+        const int failedInRow = readLeftoverMarker();
 
         if (QFile::exists(m_paths.disabledSwitch())) {
             if (!reinstalledSinceRecovery()) {
+                // An inert mod has no startup to protect.
+                removeLeftoverMarker();
                 log::info(kModule, QStringLiteral("`disabled` is present: staying inactive"));
                 return d;
             }
@@ -273,12 +290,19 @@ private:
         }
 
         if (failedInRow >= 2) {
+            removeLeftoverMarker();
             triggerRecovery();
             d.recoveryTriggered = true;
             return d;
         }
 
         m_strikes = failedInRow;
+        if (failedInRow == 1) {
+            // Keep strike one on disk for the whole of this startup.
+            const Status kept = writeMarker();
+            if (!kept.ok())
+                log::error(kModule, QStringLiteral("leftover marker: %1").arg(kept.message));
+        }
         d.modActive = true;
         d.recordingAllowed = true;
         d.previousStartupCrashed = failedInRow == 1;
