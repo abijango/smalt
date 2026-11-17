@@ -1,6 +1,7 @@
-# Owned by task 10 (see docs/tasks/). Add sources to SOURCES; the scaffold
-# stub can go once real code is here.
+# Owned by task 10 (docs/tasks/10-ledger.md). The outbox is a table in the
+# ledger file; it reaches the ledger's connection through
+# ../ledger/ledger_internal.h.
 smalt_add_module(smalt_outbox
     SOURCES
-        outbox_stub.cpp
+        outbox.cpp
     DEPS smalt_ledger)
