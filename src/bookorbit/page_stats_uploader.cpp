@@ -110,6 +110,13 @@ private:
         qint64 lastStart = 0;
     };
 
+    // A 4xx that says the data itself is wrong. 401/403 (AuthRejected) and 404
+    // (NotFound) have their own kinds; 408 and 429 are "try again later".
+    static bool refusedForGood(const HttpResult &r)
+    {
+        return r.error == ErrorKind::ClientError && r.httpStatus != 408 && r.httpStatus != 429;
+    }
+
     bool bookDone(const BookState &b) const { return b.dropped || b.next >= b.pending.size(); }
 
     void step()
@@ -121,7 +128,8 @@ private:
             const BookState &b = m_books.at(i);
             if (bookDone(b))
                 continue;
-            if (request.size() >= m_options.maxBooksPerRequest)
+            if (request.size() >= m_options.maxBooksPerRequest
+                || (m_oneAtATime && !request.isEmpty()))
                 break;
             const int remaining = b.pending.size() - b.next;
             int n = qMin(remaining, capacity);
@@ -160,6 +168,25 @@ private:
 
     void onUploaded(const Reply<QJsonObject> &reply, const QVector<Slice> &slices)
     {
+        if (refusedForGood(reply.result)) {
+            if (slices.size() > 1) {
+                // One bad book must not hold back the others: retry one book at a time.
+                m_oneAtATime = true;
+                step();
+                return;
+            }
+            const Slice &s = slices.at(0);
+            BookState &b = m_books[s.book];
+            b.dropped = true;
+            m_result.rejected.insert(b.hash, s.lastStart);
+            log::warn(kModule,
+                      QStringLiteral("book %1: the server refused its page events for good (%2); "
+                                     "they will be skipped")
+                              .arg(b.hash)
+                              .arg(reply.result.message));
+            step();
+            return;
+        }
         if (!reply.result.ok()) {
             m_result.result = reply.result;
             afterRun();
@@ -250,6 +277,7 @@ private:
     std::function<void(const SessionUploadResult &)> m_done;
     QVector<BookState> m_books;
     QSet<QString> m_acked;
+    bool m_oneAtATime = false; // After a refused multi-book request.
     SessionUploadResult m_result;
 };
 

@@ -1223,6 +1223,24 @@ private slots:
         QCOMPARE(m_client->libraryVersion(), QStringLiteral("v1"));
     }
 
+    void aNumericLibraryVersionIsKept()
+    {
+        QJsonObject rule = MockServer::rule("/plugin/match-check");
+        rule.insert(
+                "body",
+                QJsonObject{ { "libraryVersion", 1731950000123.0 }, { "matches", QJsonArray() } });
+        m_server.setRules({ rule });
+        makeClient();
+        MatchQuery q;
+        q.partialMd5 = m_hash;
+        const auto r = await<QVector<MatchResult>>(
+                [&](BookOrbitClient::Callback<QVector<MatchResult>> cb) {
+                    m_client->matchCheck({ q }, cb);
+                });
+        QVERIFY2(r.result.ok(), qPrintable(r.result.message));
+        QCOMPARE(m_client->libraryVersion(), QStringLiteral("1731950000123"));
+    }
+
     void unresolvableHostIsOffline()
     {
         ClientConfig c = config();

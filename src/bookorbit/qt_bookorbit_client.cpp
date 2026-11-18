@@ -584,7 +584,10 @@ RequestId QtBookOrbitClient::boolCall(const Call &call, Callback<bool> done)
 
 void QtBookOrbitClient::noteLibraryVersion(const QJsonObject &o)
 {
-    const QString v = o.value(QStringLiteral("libraryVersion")).toString();
+    // A string, or a number the server may send instead (toString() reads that as empty).
+    const QJsonValue jv = o.value(QStringLiteral("libraryVersion"));
+    const QString v =
+            jv.isDouble() ? QString::number(static_cast<qint64>(jv.toDouble())) : jv.toString();
     if (!v.isEmpty())
         m_libraryVersion = v;
 }

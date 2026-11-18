@@ -108,6 +108,19 @@ def test_rule_raw_body(client):
     assert client.get(url("/users/auth"), headers=AUTH).status_code == 200
 
 
+def test_rule_body_contains_only_hits_matching_requests(client):
+    good = client.app.state.mock.books[0].file.hash
+    bad = client.app.state.mock.books[1].file.hash
+    client.post("/__mock/config", json={"rules": [
+        {"path": "/plugin/page-stats", "method": "POST", "body_contains": bad, "status": 400}]})
+    ev = [{"page": 1, "startTime": 5, "durationSeconds": 1, "totalPages": 9}]
+    one = lambda h: dict(DEVICE, books=[{"hash": h, "events": ev}])
+    assert client.post(url("/plugin/page-stats"), headers=AUTH, json=one(good)).status_code == 200
+    assert client.post(url("/plugin/page-stats"), headers=AUTH, json=one(bad)).status_code == 400
+    both = dict(DEVICE, books=one(good)["books"] + one(bad)["books"])
+    assert client.post(url("/plugin/page-stats"), headers=AUTH, json=both).status_code == 400
+
+
 def test_request_log(client):
     client.get(url("/users/auth"), headers=AUTH)
     log = client.get("/__mock/requests?clear=1").json()

@@ -41,6 +41,7 @@ A rule changes how matching requests are answered:
 
 ```json
 {"path": "/plugin/page-stats", "method": "POST",
+ "body_contains": "0123abcd",
  "skip": 0, "times": 1,
  "delay_ms": 2000,
  "status": 500, "body": {"message": "boom"},
@@ -50,6 +51,6 @@ A rule changes how matching requests are answered:
  "after_processing": true}
 ```
 
-`skip` lets that many matching requests through first; `times` limits how many are affected (default: all). `status`/`body`/`raw_body` replace the answer, `delay_ms` makes it slow, `drop` sends headers and part of a body and then cuts the connection, `drop_after_bytes` does the same for a download, and `after_processing` runs the real handler first and then replaces the answer (a reply lost after the server stored the data).
+`body_contains` restricts the rule to requests whose body text contains that string (for example one book's digest). `skip` lets that many matching requests through first; `times` limits how many are affected (default: all). `status`/`body`/`raw_body` replace the answer, `delay_ms` makes it slow, `drop` sends headers and part of a body and then cuts the connection, `drop_after_bytes` does the same for a download, and `after_processing` runs the real handler first and then replaces the answer (a reply lost after the server stored the data).
 
 Connections that die before any response, servers that never answer and redirects to other hosts are done with a local `QTcpServer` in the C++ tests instead (`tests/bookorbit/fake_http_server.h`).

@@ -516,6 +516,78 @@ private slots:
         QCOMPARE(sent.at(2).toObject().value("startTime").toDouble(), double(kBase + 5 * 60));
     }
 
+    QJsonObject rejectBook(int fixture, int status = 400)
+    {
+        QJsonObject r = MockServer::rule("/plugin/page-stats", "POST");
+        r.insert("body_contains", m_hash[fixture]);
+        r.insert("status", status);
+        return r;
+    }
+
+    void oneBadBookAmongSeveralIsRejectedAndTheOthersCarryOn()
+    {
+        m_server.setRules({ rejectBook(2) });
+        QMap<QString, qint64> store;
+        const auto run =
+                upload({ book(1, events(3)), book(2, events(4)), book(3, events(2)) }, &store);
+        QVERIFY2(run->result.result.ok(), qPrintable(run->result.result.message));
+        QCOMPARE(run->result.rejected.size(), 1);
+        QCOMPARE(run->result.rejected.value(m_hash[2]), kBase + 3 * 60); // last event's start
+        QVERIFY(run->result.complete);
+        QCOMPARE(run->result.booksAcknowledged, 2);
+        QCOMPARE(run->result.eventsSent, 5);
+        QCOMPARE(storedEvents(1), 3);
+        QCOMPARE(storedEvents(2), 0);
+        QCOMPARE(storedEvents(3), 2);
+        QVERIFY(run->result.sweepSent);
+        QVERIFY(!run->result.sweepOwed);
+        // The uploader doesn't move the rejected book's watermark; the sync engine does.
+        QVERIFY(!run->result.watermarks.contains(m_hash[2]));
+        QVERIFY(!run->notified.contains(m_hash[2]));
+        QVERIFY(!store.contains(m_hash[2]));
+        QCOMPARE(run->result.watermarks.value(m_hash[1]), kBase + 120);
+        QCOMPARE(run->result.watermarks.value(m_hash[3]), kBase + 60);
+        QCOMPARE(paths().last(), QStringLiteral("/plugin/sweeps"));
+    }
+
+    void aRefusedSingleBookRequestIsRejectedAtOnce()
+    {
+        m_server.setRules({ rejectBook(1) });
+        const auto run = upload({ book(1, events(3)) });
+        QCOMPARE(run->result.rejected.value(m_hash[1]), kBase + 120);
+        QCOMPARE(run->result.requests, 1); // no retry of a lone book
+        QCOMPARE(run->result.eventsSent, 0);
+        QVERIFY(!run->result.sweepSent); // nothing acknowledged: no sweep
+        QVERIFY(!run->result.sweepOwed);
+        QVERIFY(run->result.watermarks.isEmpty());
+    }
+
+    void errorsThatAreNotARefusalOfTheDataNeverLandInRejected()
+    {
+        const QList<int> statuses{ 401, 403, 404, 408, 429, 500, 503 };
+        for (int status : statuses) {
+            m_server.reset();
+            QJsonObject r = MockServer::rule("/plugin/page-stats", "POST");
+            r.insert("status", status);
+            m_server.setRules({ r });
+            const auto run = upload({ book(1, events(2)), book(2, events(2)) });
+            QVERIFY2(run->result.rejected.isEmpty(), qPrintable(QString::number(status)));
+            QVERIFY2(!run->result.result.ok(), qPrintable(QString::number(status)));
+            QVERIFY(!run->result.complete);
+            QCOMPARE(run->result.requests, 1); // no per-book retry either
+        }
+    }
+
+    void aTimeoutIsNotRejected()
+    {
+        QJsonObject r = MockServer::rule("/plugin/page-stats", "POST");
+        r.insert("delay_ms", 3000);
+        m_server.setRules({ r });
+        const auto run = upload({ book(1, events(2)), book(2, events(2)) });
+        QCOMPARE(run->result.result.error, ErrorKind::Timeout);
+        QVERIFY(run->result.rejected.isEmpty());
+    }
+
     void aLivePushEveryFiveMinutesSendsOnlyTheNewEventsAndOneSweepEach()
     {
         // The "While reading" trigger: a handful of events per push, no events between.
