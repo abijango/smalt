@@ -1,6 +1,13 @@
-# Owned by task 11 (see docs/tasks/). Add sources to SOURCES; the scaffold
-# stub can go once real code is here.
+# Owned by task 11: the BookOrbit client (docs/tasks/11-bookorbit-client.md).
 smalt_add_module(smalt_bookorbit
     SOURCES
-        bookorbit_stub.cpp
+        client_config.cpp
+        page_stats_uploader.cpp
+        partial_md5.cpp
+        qt_bookorbit_client.cpp
+        transfer.cpp
     DEPS Qt5::Network)
+
+# Other modules and the tests reach this module's own headers as
+# "bookorbit/<header>.h" (client_config.h, page_stats_uploader.h, ...).
+target_include_directories(smalt_bookorbit PUBLIC "${PROJECT_SOURCE_DIR}/src")

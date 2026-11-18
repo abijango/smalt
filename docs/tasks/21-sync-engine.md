@@ -34,3 +34,10 @@ The API client internals (call through `include/smalt/bookorbit_client.h`), ledg
 - A sync cut off at any point loses nothing and duplicates nothing on retry.
 - Wi-Fi is restored to its previous state in every path, including timeouts.
 - Writes for an open book wait until close.
+
+## Addendum (after wave 1: session decisions)
+
+See `docs/SPEC.md` ("Triggers", "Order of a full sync", "Conflict rules", "Settings screen"):
+- New trigger **While reading**: push the open book's finished page events since its watermark. Default: only when Wi-Fi is already connected, every 5 minutes. **Connect briefly**: turn Wi-Fi on for the push (every 15 minutes by default) and restore it. Never blocks a page turn.
+- A book's position is never pushed before its unsent page events, unless those were rejected for good (4xx).
+- Store the watermark per book and "sweep owed" in the ledger; a sweep follows every upload of page events.

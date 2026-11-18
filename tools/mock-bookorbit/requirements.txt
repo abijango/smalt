@@ -1,0 +1,8 @@
+# What the mock server and its tests need (python3 -m pip install -r requirements.txt).
+# Versions are the ones the mock was written and tested against; newer ones should do.
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2
+# Tests of the mock itself (starlette's TestClient uses httpx):
+httpx>=0.27
+pytest>=8

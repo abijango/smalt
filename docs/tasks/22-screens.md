@@ -34,3 +34,7 @@ Feature design (Home screen and library, Large-library UX, Downloads, Books remo
 - Screenshot tests of each screen on the three device profiles, compared against `docs/mockups/`.
 - Offline mode shows cached pages and marks undownloaded items unavailable.
 - Download resumes and lands at the right path.
+
+## Addendum (after wave 1: session decisions)
+
+Settings gets **Push while reading** (Off, Only when connected, Connect briefly, with the interval) and **New session after sleep** (15 minutes to Never), as in `docs/SPEC.md` ("Settings screen"). The status chips and labels use BookOrbit's six statuses (`docs/SPEC.md`, "Status and ratings").

@@ -46,3 +46,12 @@ Read-only queries the Stats task (23) needs, exposed through `include/smalt/ledg
 - Sessions in a time range (start, end, active seconds, book, start and end page), ordered by start.
 - Sessions for one book, newest first, with a limit.
 - Whether each session has been confirmed by the server, so Stats can merge only unconfirmed minutes into the server heatmap.
+
+## Addendum (after wave 1: session decisions)
+
+Decided by the maintainer; see `docs/SPEC.md` ("How sessions are captured", "How BookOrbit builds sessions", "Sleeping inside a book", "Correcting a session", "Status and ratings"). Ledger changes, as schema version 2 with a migration:
+- A `page_event` table: session UUID, book, page, total pages, start time (UTC), seconds on the page; append-only, never edited.
+- `book_map` gets the page-stats watermark; the `server` row gets "sweep owed".
+- A session's end position (and approximate mark) can be corrected after it's sent; its times can't.
+- `book_state` stores BookOrbit's six statuses.
+- The outbox never hands out a book's position while that book has unsent page events, unless those were rejected for good.

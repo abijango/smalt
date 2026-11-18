@@ -78,6 +78,15 @@ No explicit deleted-books feed found. `match-check` and sweeps return a `library
 
 Search (`q`), series list and series filter, collections, smart scopes, sort and paging all exist. "Up next in series" and "want to read" exist as dashboard sections. A format filter wasn't seen; filter locally by file format.
 
+### 10. How BookOrbit builds sessions from page events
+
+Read in BookOrbit's server at commit `c77966cc529423e993fae8a298aa77048b43bba2` (`server/src/modules/koreader/koreader-stats.util.ts`, `koreader-stats.service.ts`, `koreader-plugin.repository.ts`, `server/src/db/schema/koreader.ts`):
+
+- Page events are stored per user, book file and device; `(page, startTime)` is unique, and a resent event is ignored (`onConflictDoNothing`), so an event's duration can't be changed after it's sent.
+- Sessions are derived from a book's events per device: events whose gap is 30 minutes or less (`KOREADER_SESSION_GAP_SECONDS = 1800`) form one session; reading time is the sum of page durations, capped at the session's wall-clock span; sessions under 10 seconds are dropped.
+- A session's ID comes from its first event's start time, and new events re-derive only the affected window, so events uploaded later extend an existing session (the server reports it as updated, not inserted).
+- The page-stats reply carries a per-book watermark: the newest `startTime` in that batch, duplicates included.
+
 ## Still open
 
 - Exact payload of `plugin/sweeps` acknowledgement, and whether sessions measured under Smalt's device ID retire estimates created from **Kobo sync** under the Kobo device's ID (BookOrbit server code needed). Avoid the question by turning Kobo sync off.

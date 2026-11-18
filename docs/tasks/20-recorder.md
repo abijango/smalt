@@ -41,3 +41,10 @@ Ledger internals (call through `include/smalt/ledger.h`), sync, UI.
 ## Device checks (maintainer)
 
 The scenarios above on the Kobo, compared with Kobalt's own reading history.
+
+## Addendum (after wave 1: session decisions)
+
+See `docs/SPEC.md` ("How sessions are captured", "Sleeping inside a book", "Correcting a session"):
+- Page events are the primary record: one per page you leave, from Kobalt's `pageTurned` events; the page on screen ends at close or sleep. `TimeSpentReading` is the cross-check; synthesised page events only when page turns can't be observed.
+- Sleep pauses the session. "New session after sleep" (15 minutes by default) decides whether wake continues the same session or starts a new one; sleep time is never counted.
+- An approximate end position is corrected at the next wake, sleep or close, even after the session was sent; times never change.

@@ -17,3 +17,6 @@ config.ini
 
 # CI reports (scripts/ci/)
 reports/
+
+# Agent worktrees (orchestrated waves)
+.claude/worktrees/
