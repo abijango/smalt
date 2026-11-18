@@ -49,8 +49,12 @@ public:
     // Call once, early, before anything else in the mod runs.
     virtual StartupDecision evaluateStartup() = 0;
 
-    // Startup marker: written before home takeover, removed after the home
-    // screen has drawn, on clean shutdown, power-off or fallback.
+    // Startup marker: covers the mod's whole startup (hooks, recorder, ledger),
+    // also with `disable-home`; a leftover marker is rewritten with the new
+    // strike count by evaluateStartup(). Removed after the home screen has
+    // drawn, on clean shutdown, power-off, fallback to Nickel's home, and when
+    // the readiness timeout fires. Refused (Unavailable) when the mod is inert
+    // or readiness already timed out.
     virtual Status writeStartupMarker() = 0;
     virtual Status clearStartupMarker(MarkerClearReason reason) = 0;
 
@@ -77,8 +81,29 @@ public:
     virtual void done() = 0;
 };
 
+class NickelBridge;
+
+// Wait for Nickel (Crash safety, "Wait for Nickel"): `onReady` runs once, when
+// Nickel is already ready, on nickelReady(), or from a 1 s check of isReady()
+// if the signal was missed; `onGiveUp` runs once after `giveUpMs` instead.
+class NickelReadyWait
+{
+public:
+    virtual ~NickelReadyWait() = default;
+    virtual void start(std::function<void()> onReady, std::function<void()> onGiveUp) = 0;
+    virtual bool ready() const = 0;
+};
+
+// Run from the plugin's NickelHook uninstall callback (NickelHook has already
+// removed the library). Removes `startup-session` and `disabled` so a
+// reinstall starts clean; keeps the ledger, backup/, logs/, config files,
+// other switches and RECOVERY.txt (CLAUDE.md hard rule 3).
+Status cleanupAfterUninstall(const Paths &paths);
+
 // Defined by task 12 (src/safety/).
 std::unique_ptr<Safety> createSafety(const Paths &paths);
+std::unique_ptr<NickelReadyWait> createNickelReadyWait(NickelBridge *nickel,
+                                                       int giveUpMs = kReadinessTimeoutMs);
 std::unique_ptr<SleepWatchdog> createSleepWatchdog(int limitMs = kSleepWatchdogMs);
 
 } // namespace smalt

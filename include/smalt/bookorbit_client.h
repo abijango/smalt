@@ -49,6 +49,7 @@ enum class ErrorKind {
     NotSupported, // The server's capability list doesn't advertise it.
     Cancelled, // cancel() or cancelAll().
     LocalIo, // A download couldn't be written to disk.
+    TlsError, // The certificate didn't verify against the bundle (not "no network").
 };
 
 struct HttpResult
@@ -89,7 +90,9 @@ struct MatchResult
     bool matched = false;
     qint64 bookId = 0;
     qint64 bookFileId = 0;
-    bool positionCompatible = false;
+    // The server only ever sends positionCompatible:false; absent means true
+    // (koreader-plugin.service.ts at BookOrbit c77966cc).
+    bool positionCompatible = true;
 };
 
 // kosync progress (GET/PUT syncs/progress), snake_case on the wire.
@@ -160,6 +163,12 @@ public:
     virtual RequestId
     capabilities(Callback<QJsonObject> done) = 0; // capability list + server version
     virtual bool hasCapability(const QString &name) const = 0; // From the cached list.
+    virtual bool
+    capabilitiesKnown() const = 0; // False until a capability list (or a 4xx) came back.
+    virtual QString serverVersion() const = 0; // From the capability list; empty if unknown.
+    // Newest libraryVersion from a match-check or sweeps reply; empty if none
+    // yet. Removal detection compares it (VERIFY-FINDINGS item 8).
+    virtual QString libraryVersion() const = 0;
 
     // --- Book identity ---
     virtual RequestId
@@ -180,9 +189,13 @@ public:
     virtual RequestId sendSweep(const QJsonObject &counts, Callback<QJsonObject> done) = 0;
 
     // --- Highlights (one way, Kobo to BookOrbit) ---
-    virtual RequestId
-    exchangeAnnotations(const QString &document, const QJsonArray &annotations,
-                        Callback<QJsonObject> done) = 0; // plugin/annotations/exchange
+    // POST plugin/annotations/exchange. The server detects deletions from a
+    // complete key list: send every local annotation's key in `keys` with
+    // `keysComplete` true. `sidecarState` is the plugin's state token (empty if none).
+    virtual RequestId exchangeAnnotations(const QString &document, const QJsonArray &changes,
+                                          const QJsonArray &keys, bool keysComplete,
+                                          const QString &sidecarState,
+                                          Callback<QJsonObject> done) = 0;
     virtual RequestId ackAnnotations(const QString &document, const QJsonObject &ack,
                                      Callback<bool> done) = 0; // plugin/annotations/exchange-ack
 

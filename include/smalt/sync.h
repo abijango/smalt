@@ -21,7 +21,19 @@ constexpr int kRecentSuccessSkipSeconds = 5 * 60; // "in the last 5 minutes, wit
 constexpr int kManualSyncTimeoutMs = 60000; // "Sync now": 60 s
 constexpr int kToastAfterConsecutiveFailures = 3; // "failed three syncs in a row"
 
+// Push while reading (SPEC, Triggers and Settings screen).
+enum class LivePushMode {
+    Off,
+    OnlyWhenConnected, // Default: push only if Wi-Fi is already connected.
+    ConnectBriefly, // Turn Wi-Fi on for the push and put it back the way it was.
+};
+constexpr LivePushMode kDefaultLivePushMode = LivePushMode::OnlyWhenConnected;
+constexpr int kDefaultLivePushMinutes = 5; // Default for OnlyWhenConnected.
+constexpr int kDefaultConnectBrieflyMinutes = 15; // Default for ConnectBriefly.
+constexpr int kLivePushChoicesMinutes[4] = { 5, 10, 15, 30 };
+
 enum class SyncTrigger {
+    WhileReading, // Push the open book's finished page events since its watermark.
     BookClosed, // Push that book's session, position, highlights, status.
     BeforeSleep, // End the open session, push the outbox, quick position pull.
     Wake, // Pull, then push; background.

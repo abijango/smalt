@@ -1,4 +1,4 @@
-// Uploads reading sessions as page events and tells the server the device
+// Uploads reading as page events and tells the server the device
 // measures its own sessions (Sync engine, "Order of a full sync", step 1;
 // docs/tasks/11-bookorbit-client.md, "Sessions").
 //
@@ -24,6 +24,7 @@
 // Events the server would refuse (startTime < 1, totalPages < 1, page < 0) are
 // skipped and counted in eventsSkippedInvalid, so one bad event cannot block a
 // book's later sessions. durationSeconds is clamped to 0..86400 as the plugin does.
+// Implemented by task 11 in src/bookorbit/page_stats_uploader.cpp.
 #pragma once
 
 #include "smalt/bookorbit_client.h"

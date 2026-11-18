@@ -6,6 +6,7 @@
 #include "smalt/log.h"
 #include "smalt/nickel.h"
 #include "smalt/outbox.h"
+#include "smalt/page_stats.h"
 #include "smalt/paths.h"
 #include "smalt/safety.h"
 #include "smalt/status.h"
@@ -67,6 +68,34 @@ private slots:
         QCOMPARE(p.accentDark.name(), QStringLiteral("#2f5853"));
         QVERIFY(p.colourCovers);
         QCOMPARE(smalt::ui::paletteFor(DeviceModel::LibraColour).accent, p.accent);
+    }
+
+    void heatmapStepsMatchTheSpec()
+    {
+        const smalt::ui::Palette colour = smalt::ui::paletteFor(DeviceModel::ClaraColour);
+        const smalt::ui::Palette mono = smalt::ui::paletteFor(DeviceModel::ClaraBW);
+        const char *colourSteps[5] = { "#ececec", "#c9dcd8", "#93b6b0", "#5e8c86", "#3e6f6a" };
+        const char *monoSteps[5] = { "#ececec", "#c4c4c4", "#8e8e8e", "#5a5a5a", "#111111" };
+        for (int i = 0; i < 5; ++i) {
+            QCOMPARE(colour.heatmap[i].name(), QString::fromLatin1(colourSteps[i]));
+            QCOMPARE(mono.heatmap[i].name(), QString::fromLatin1(monoSteps[i]));
+        }
+    }
+
+    void fiveTabsOnEveryDevice()
+    {
+        QCOMPARE(smalt::deviceProfile(DeviceModel::ClaraColour).tabs, 5);
+        QCOMPARE(smalt::deviceProfile(DeviceModel::ClaraBW).tabs, 5);
+        QCOMPARE(smalt::deviceProfile(DeviceModel::LibraColour).tabs, 5);
+    }
+
+    void interfaceDefaultsFromDecisions()
+    {
+        QVERIFY(smalt::MatchResult().positionCompatible);
+        QCOMPARE(smalt::kDefaultNewSessionAfterSleepSeconds, 15 * 60);
+        QCOMPARE(int(smalt::kDefaultLivePushMode), int(smalt::LivePushMode::OnlyWhenConnected));
+        QCOMPARE(smalt::kDefaultLivePushMinutes, 5);
+        QCOMPARE(smalt::kDefaultConnectBrieflyMinutes, 15);
     }
 
     void monochromePaletteReplacesTeal()
