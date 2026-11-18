@@ -20,8 +20,8 @@ Feature design (Home screen and library, Large-library UX, Downloads, Books remo
 
 ## Build
 
-- Screens: Home, Library, Series, Series detail, Book detail, Search, More (with Kobo home, Shelves on the Claras, Settings, sync status), Settings.
-- Device layouts: Clara (3 reading covers, 1 up-next row, 4 tabs) and Libra (4 covers, 2 rows, 5 tabs), portrait only.
+- Screens: Home, Library, Series, Series detail, Book detail, Search, More (with Kobo home, Shelves, Settings, sync status), Settings. The Stats tab and the book detail "Your reading" section are task 23: leave a slot for each (a placeholder widget task 23 replaces).
+- Tab bar on every device: Home, Library, Series, Stats, More. Device layouts: Clara (3 reading covers, 1 up-next row) and Libra (4 covers, 2 rows), portrait only.
 - Paged lists with page counter and jump-to-letter; Libra page-turn buttons flip pages.
 - Search in every header; grouped results; offline searches only on-device books and says so.
 - Chips remembered per tab; one tap clears.

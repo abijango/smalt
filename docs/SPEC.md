@@ -197,9 +197,10 @@ Screens:
 - **Library:** everything in BookOrbit except audiobooks, with chips for format (Books, Comics, PDFs), status (Unread, Reading, Finished) and On Kobo, plus sort.
 - **Series:** every series with a cover stack, read count and a segmented progress bar, with chips for Reading, Unread, Comics and sort.
 - **Series detail:** books in series order with their state, a Continue button for the book in progress, and Download next 3.
-- **Book detail:** cover, metadata, series position, reading status, and one main button that changes with state: Download, Downloading 42%, Open, or Update available.
+- **Book detail:** cover, metadata, series position, reading status, and one main button that changes with state: Download, Downloading 42%, Open, or Update available. Books you've read on this Kobo also get a "Your reading" section (see Stats).
 - **Search:** results grouped into series, authors and books.
-- **More:** Kobo home, Shelves (on the Claras), Settings and sync status.
+- **Stats:** Overview, Patterns and Year, described under Stats.
+- **More:** Kobo home, Shelves, Settings and sync status.
 
 ### Large-library UX
 
@@ -335,7 +336,8 @@ Layout is defined in physical millimetres, not pixels, so text, covers and touch
 
 - **Reading now:** 3 covers on the Claras, 4 on the Libra.
 - **Up next in your series:** 1 row on the Claras, 2 on the Libra.
-- **Tabs:** Home, Library, Series and More on the Claras, with Shelves and Kobo home under More. The Libra adds Shelves as a fifth tab.
+- **Tabs:** Home, Library, Series, Stats and More on all three devices (about 18 mm per tab on the Claras). Shelves, Kobo home, Settings and sync status live under More.
+- **Heatmap:** 26 weeks on the Claras, 52 on the Libra.
 - **Orientation:** portrait only in version 1. A two-pane landscape layout for the Libra is a later addition.
 
 ### Monochrome palette (Clara BW)
@@ -352,6 +354,39 @@ The device model is read at startup and picks the palette; every layout is share
 ### Series and search
 
 ![Series list, series detail and search](mockups/series-detail-search.png)
+
+## Stats
+
+The Stats tab shows reading across all devices where BookOrbit has it, and this Kobo's detail where only Smalt has it. Every section carries a small label, "All devices" or "This Kobo", so numbers never look contradictory.
+
+![Stats screens](mockups/stats.png)
+
+### Sources
+
+| Data | Source | Scope |
+| --- | --- | --- |
+| Minutes per day for the last year (heatmap), streak (current, longest, last seven days), reading goal (target and completed), books finished this year, a year ago (book, days, minutes, where you stopped), next achievement badge, highlight of the day | `plugin/catalog/dashboard` (`readingYear`, `readingStreak`, `readingGoal`, `finishedThisYear`, `yearAgo`, `achievements`, `highlightOfTheDay`) | All devices |
+| Today's timeline, time of day, day of week, records (longest session, best day, reading speed, average session, session count), per-book time, sessions, pages per hour, finish forecast | Smalt's ledger | This Kobo |
+
+- The dashboard response is cached in `remote_cache` and refreshed on every pull; the screens work offline from the cache.
+- Reading recorded on this Kobo but not yet confirmed by the server is added to the cached heatmap, today and this week, as BookOrbit's plugin does, so today always counts. Once the server's day includes it, the local addition for that day is dropped.
+- Achievements and highlight of the day are hidden when the server sends none (they can be turned off in BookOrbit).
+
+### Screens
+
+Chips at the top switch between three screens; each remembers the last one used.
+
+- **Overview:** heatmap (all devices) with a five-step legend; streak with current, longest and the last seven days as dots; reading goal as a progress bar with "N books ahead of / behind pace"; today and this week as tiles; today's sessions as blocks on a 24-hour strip (this Kobo).
+- **Patterns (this Kobo):** minutes by hour of day as 24 bars with a one-line summary ("Mostly 21:00–23:00"); average minutes by day of week; records: longest session, best day, reading speed over the last 30 days in pages per hour, average session and session count.
+- **Year (all devices):** books finished this year as a cover grid with count and hours; "A year ago you were reading…"; the next badge with a progress bar.
+- **Book detail, "Your reading" (this Kobo):** a finish forecast ("About 3 h 20 m left · done around Thursday at your pace of 25 min a day"), a strip of the days you read the book, tiles for time read, sessions, pages per hour and average session, and the latest sessions with their times.
+
+### Rules
+
+- Heatmap cells use five steps from paper to teal on colour devices (`#ECECEC`, `#C9DCD8`, `#93B6B0`, `#5E8C86`, `#3E6F6A`) and five greys on the Clara BW (`#ECECEC`, `#C4C4C4`, `#8E8E8E`, `#5A5A5A`, `#111111`). Steps are fixed minute bands (0, under 15, under 30, under 60, 60 or more) so a day looks the same every time.
+- Bars, timeline blocks and progress use teal; numbers and labels stay black.
+- Nothing on the screen updates live; it redraws when opened and after a sync.
+- The forecast uses the median minutes per reading day over the last 14 days and pages per hour over the last 30; with fewer than three sessions it shows "Not enough reading yet".
 
 ## Migration off Kobo sync
 
