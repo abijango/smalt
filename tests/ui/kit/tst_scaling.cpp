@@ -24,8 +24,8 @@ QList<QWidget *> tappables(kit::KitFactory &f, QWidget *parent)
       << f.bottomTabs(QStringList() << QStringLiteral("Home") << QStringLiteral("More"), 0, parent)
       << f.pager(1, 3, parent) << f.searchField(parent)
       << f.banner(QStringLiteral("Removed"), QStringLiteral("Review"), parent)
-      << f.downloadBadge(kit::BadgeState::Download, QString(), parent);
-    kit::ListRowSpec row;
+      << f.downloadBadge(BadgeState::Download, QString(), parent);
+    ListRowSpec row;
     row.title = QStringLiteral("T");
     w << f.listRow(row, parent);
     w << f.letterGrid(parent);
@@ -85,13 +85,13 @@ private slots:
         kit::KitFactory libra(DeviceModel::LibraColour, nullptr);
         QWidget pc, pl;
         // Covers, badges, the letter grid and cover stack do not grow on the big screen.
-        QCOMPARE(clara.cover(kit::CoverSpec(), 21.0, &pc)->size(),
-                 libra.cover(kit::CoverSpec(), 21.0, &pl)->size());
+        QCOMPARE(clara.cover(CoverSpec(), 21.0, &pc)->size(),
+                 libra.cover(CoverSpec(), 21.0, &pl)->size());
         QCOMPARE(clara.letterGrid(&pc)->size(), libra.letterGrid(&pl)->size());
-        QCOMPARE(clara.coverStack(kit::CoverSpec(), &pc)->size(),
-                 libra.coverStack(kit::CoverSpec(), &pl)->size());
-        QCOMPARE(clara.downloadBadge(kit::BadgeState::Download, QString(), &pc)->size(),
-                 libra.downloadBadge(kit::BadgeState::Download, QString(), &pl)->size());
+        QCOMPARE(clara.coverStack(CoverSpec(), &pc)->size(),
+                 libra.coverStack(CoverSpec(), &pl)->size());
+        QCOMPARE(clara.downloadBadge(BadgeState::Download, QString(), &pc)->size(),
+                 libra.downloadBadge(BadgeState::Download, QString(), &pl)->size());
         QCOMPARE(clara.theme().font(kit::FontRole::Body).pixelSize(),
                  libra.theme().font(kit::FontRole::Body).pixelSize());
         QCOMPARE(clara.theme().px(kit::metrics::kPageMarginMm),
@@ -109,9 +109,9 @@ private slots:
         for (int i = 0; i < 2; ++i) {
             kit::KitFactory &f = i == 0 ? clara : libra;
             QWidget parent;
-            QList<kit::CoverSpec> covers;
+            QList<CoverSpec> covers;
             for (int c = 0; c < 6; ++c)
-                covers << kit::CoverSpec();
+                covers << CoverSpec();
             kit::CoverRow *row = static_cast<kit::CoverRow *>(f.coverRow(covers, &parent));
             row->resize(f.profile().widthPx, row->height());
             const int visibleCovers = f.profile().readingNowCovers;
@@ -127,15 +127,14 @@ private slots:
 
     void tabsFollowTheProfile()
     {
-        QCOMPARE(deviceProfile(DeviceModel::ClaraColour).tabs, 4);
-        QCOMPARE(deviceProfile(DeviceModel::ClaraBW).tabs, 4);
+        QCOMPARE(deviceProfile(DeviceModel::ClaraColour).tabs, 5);
+        QCOMPARE(deviceProfile(DeviceModel::ClaraBW).tabs, 5);
         QCOMPARE(deviceProfile(DeviceModel::LibraColour).tabs, 5);
-        // Five tabs still give each tab a 9 mm wide target on the narrowest screen they use.
+        // Five tabs on every device; each keeps a 9 mm wide target (Clara width checked in tst_rules).
         kit::KitFactory libra(DeviceModel::LibraColour, nullptr);
         QWidget parent;
         kit::BottomTabs *tabs = static_cast<kit::BottomTabs *>(libra.bottomTabs(
-                QStringList() << "Home" << "Library" << "Series" << "Shelves" << "More", 0,
-                &parent));
+                QStringList() << "Home" << "Library" << "Series" << "Stats" << "More", 0, &parent));
         tabs->resize(libra.profile().widthPx, tabs->height());
         QVERIFY(tabs->tabRect(0).width() >= mmToPx(kMinTouchTargetMm, 300));
     }

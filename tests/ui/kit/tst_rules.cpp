@@ -131,7 +131,7 @@ private slots:
     {
         kit::KitFactory f(DeviceModel::ClaraColour, nullptr);
         QWidget parent;
-        kit::ListRowSpec spec;
+        ListRowSpec spec;
         spec.title = QStringLiteral("Title");
         QWidget *row = f.listRow(spec, &parent);
         row->resize(f.profile().widthPx, row->height());
@@ -146,7 +146,8 @@ private slots:
             kit::KitFactory f(m == 0 ? DeviceModel::ClaraColour : DeviceModel::ClaraBW, nullptr);
             QWidget parent;
             kit::BottomTabs *tabs = static_cast<kit::BottomTabs *>(f.bottomTabs(
-                    QStringList() << "Home" << "Library" << "Series" << "More", 1, &parent));
+                    QStringList() << "Home" << "Library" << "Series" << "Stats" << "More", 1,
+                    &parent));
             tabs->resize(f.profile().widthPx, tabs->height());
             const QImage img = grab(tabs);
             const int y = img.height() - 2;
@@ -193,7 +194,7 @@ private slots:
         for (int m = 0; m < 2; ++m) {
             kit::KitFactory f(m == 0 ? DeviceModel::ClaraColour : DeviceModel::ClaraBW, nullptr);
             QWidget parent;
-            kit::CoverSpec spec;
+            CoverSpec spec;
             spec.pixmap = kit::gallery::fakeCover(1);
             spec.format = QStringLiteral("CBZ");
             spec.progress = 0.5;
@@ -358,9 +359,9 @@ private slots:
     {
         kit::KitFactory f(DeviceModel::ClaraColour, nullptr);
         QWidget page;
-        kit::ListRowSpec spec;
+        ListRowSpec spec;
         spec.title = QStringLiteral("Piranesi");
-        spec.badge = kit::BadgeState::Download;
+        spec.badge = BadgeState::Download;
         kit::ListRow *row = static_cast<kit::ListRow *>(f.listRow(spec, &page));
         row->setGeometry(0, 0, f.profile().widthPx, row->height());
         page.show();
@@ -373,12 +374,36 @@ private slots:
         QCOMPARE(rowTap.count(), 1);
     }
 
+    void fiveTabsFitEveryDeviceWithNinemmTargets()
+    {
+        const QList<DeviceModel> models = allModels();
+        for (int m = 0; m < models.size(); ++m) {
+            kit::KitFactory f(models.at(m), nullptr);
+            QCOMPARE(f.profile().tabs, 5);
+            QWidget parent;
+            kit::BottomTabs *tabs = static_cast<kit::BottomTabs *>(f.bottomTabs(
+                    QStringList() << "Home" << "Library" << "Series" << "Stats" << "More", 0,
+                    &parent));
+            tabs->resize(f.profile().widthPx, tabs->height());
+            QVERIFY(tabs->heightMm() >= kMinTouchTargetMm);
+            const QFontMetrics fm(f.theme().font(kit::FontRole::Body));
+            int covered = 0;
+            for (int i = 0; i < 5; ++i) {
+                const QRect r = tabs->tabRect(i);
+                covered += r.width();
+                QVERIFY(r.width() >= mmToPx(kMinTouchTargetMm, f.profile()));
+                QVERIFY(fm.width(i == 1 ? "Library" : "Series") < r.width());
+            }
+            QCOMPARE(covered, f.profile().widthPx);
+        }
+    }
+
     void tabsReportChangesOnly()
     {
         kit::KitFactory f(DeviceModel::ClaraColour, nullptr);
         QWidget page;
-        kit::BottomTabs *tabs = static_cast<kit::BottomTabs *>(
-                f.bottomTabs(QStringList() << "Home" << "Library" << "Series" << "More", 0, &page));
+        kit::BottomTabs *tabs = static_cast<kit::BottomTabs *>(f.bottomTabs(
+                QStringList() << "Home" << "Library" << "Series" << "Stats" << "More", 0, &page));
         tabs->setGeometry(0, 0, f.profile().widthPx, tabs->height());
         page.show();
         QSignalSpy spy(tabs, SIGNAL(tabTapped(int)));

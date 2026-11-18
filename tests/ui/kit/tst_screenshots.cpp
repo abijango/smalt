@@ -53,7 +53,7 @@ private slots:
         QTest::newRow("libra colour cover row") << 2 << QStringLiteral("libra-colour-cover_row");
     }
 
-    // The three device frames (Home), plus the Libra's five tabs and four covers.
+    // The three device frames (Home), plus the five-tab bar and four covers.
     void libraTabsAndFrames()
     {
         QFETCH(int, modelIndex);
