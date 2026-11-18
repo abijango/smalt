@@ -22,7 +22,7 @@ public:
     virtual QDateTime nowUtc() const = 0;
 
     // Runs `fn` once, `ms` milliseconds from now, on the calling thread's
-    // event loop. Returns an id for cancelTimer() (always > 0).
+    // event loop, never earlier. Returns an id for cancelTimer() (always > 0).
     virtual int startTimer(int ms, std::function<void()> fn) = 0;
 
     // Cancels a timer that hasn't fired yet. Unknown or fired ids are ignored.
