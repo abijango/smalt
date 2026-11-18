@@ -22,7 +22,7 @@ namespace ledgerdb {
 // Current schema version, kept in PRAGMA user_version. Version 0 is an empty
 // file. Every change to the schema adds a migration in schema.cpp and bumps
 // this number; never edit an existing migration.
-constexpr int kSchemaVersion = 1;
+constexpr int kSchemaVersion = 2;
 
 // Daily backups kept in Paths::backupDir() (SPEC, Crash safety, "Ledger protection").
 constexpr int kBackupsKept = 7;
@@ -64,12 +64,16 @@ Status migrate(QSqlDatabase db, int targetVersion);
 // QSqlDatabase when it is closed (USB connected) or not a SQLite ledger.
 QSqlDatabase database(Ledger *ledger);
 
-// Corrects the end of a session that hasn't been sent yet (SPEC, "Sleeping
-// inside a book": an approximate end position is corrected at the next sleep
-// or close). InvalidArgument once the session has been handed to the outbox
-// for upload; NotFound for an unknown UUID. Proposed for include/smalt/ledger.h.
-Status correctSessionEnd(Ledger *ledger, const QString &uuid, const Position &end,
-                         bool approximate);
+// Unix seconds, as page events and the watermark use them (no
+// QDateTime::toSecsSinceEpoch in Qt 5.2).
+qint64 toUnix(const QDateTime &utc);
+QDateTime fromUnix(qint64 seconds);
+
+// FROM ... WHERE clause (aliases pe for page_event, s for session) selecting
+// page events above their book's watermark: what still has to be uploaded.
+// Events of Dropped sessions never count. A book without a book_map row has
+// watermark 0. Shared by the ledger and the outbox's Position hold.
+extern const char kPendingPageEventsFromWhere[];
 
 } // namespace ledgerdb
 } // namespace smalt

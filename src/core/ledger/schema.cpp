@@ -163,6 +163,94 @@ const char *const kVersion1[] = {
     " resolved_utc INTEGER)",
 };
 
+// Version 2: page events, open sessions and the page-stats watermark (SPEC,
+// "How sessions are captured", "Sleeping inside a book", "Correcting a
+// session"; task 10 addendum "after wave 1").
+//
+// Every v1 row is kept:
+// - session: v1 rows were complete sessions of 10 s or more, so they become
+//   Finished (state 1). The v1 columns sent_utc and confirmed_utc stay in the
+//   table, unused: whether a session is confirmed now comes from its page
+//   events and the book's watermark.
+// - outbox: rows of kind 0 (v1 "session" items) stay where they are and are
+//   ignored by the outbox, which only reads kinds 1..3. Nothing is deleted.
+// - book_state.status: v1 stored 0 unknown, 1 reading, 2 finished,
+//   3 abandoned; v2 stores BookOrbit's six (see the comment on status below),
+//   with Finished becoming Read.
+const char *const kVersion2[] = {
+    // server: whether a sweep is owed. pull_cursor, last_pull_utc and
+    // last_sync_utc already exist.
+    "ALTER TABLE server ADD COLUMN sweep_owed INTEGER NOT NULL DEFAULT 0",
+
+    // book_map: the page-stats watermark, Unix seconds (start time of the
+    // newest page event that needs no further upload). Only moves forward.
+    "ALTER TABLE book_map ADD COLUMN stats_watermark INTEGER NOT NULL DEFAULT 0",
+    "CREATE TRIGGER book_map_watermark_forward BEFORE UPDATE OF stats_watermark ON book_map"
+    " WHEN NEW.stats_watermark < OLD.stats_watermark"
+    " BEGIN SELECT RAISE(ABORT, 'the stats watermark only moves forward'); END",
+
+    // session: state 0 open, 1 finished, 2 dropped (under 10 s; kept, never
+    // counted). Pages as in the page events; -1 = unknown.
+    "ALTER TABLE session ADD COLUMN state INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE session ADD COLUMN start_page INTEGER NOT NULL DEFAULT -1",
+    "ALTER TABLE session ADD COLUMN end_page INTEGER NOT NULL DEFAULT -1",
+    "ALTER TABLE session ADD COLUMN total_pages INTEGER NOT NULL DEFAULT 0",
+    "CREATE INDEX session_state ON session (state)",
+    // The v1 rule (frozen once handed to the outbox) is replaced by: times and
+    // counts change only while the session is open; the end position and the
+    // approximate mark can be corrected at any time.
+    "DROP TRIGGER session_frozen_once_sent",
+    "DROP TRIGGER session_sent_is_final",
+    "CREATE TRIGGER session_valid_state BEFORE INSERT ON session"
+    " WHEN NEW.state NOT IN (0, 1, 2)"
+    " BEGIN SELECT RAISE(ABORT, 'unknown session state'); END",
+    "CREATE TRIGGER session_one_open BEFORE INSERT ON session"
+    " WHEN NEW.state = 0 AND EXISTS (SELECT 1 FROM session WHERE state = 0)"
+    " BEGIN SELECT RAISE(ABORT, 'another session is open'); END",
+    "CREATE TRIGGER session_state_final BEFORE UPDATE OF state ON session"
+    " WHEN NEW.state <> OLD.state AND (OLD.state <> 0 OR NEW.state NOT IN (1, 2))"
+    " BEGIN SELECT RAISE(ABORT, 'a finished or dropped session stays so'); END",
+    "CREATE TRIGGER session_times_final"
+    " BEFORE UPDATE OF end_utc, active_seconds, start_locator, start_percent, start_page,"
+    " end_page, total_pages, pages_turned, estimated ON session"
+    " WHEN OLD.state <> 0"
+    " BEGIN SELECT RAISE(ABORT, 'a finished session''s times are final'); END",
+
+    // page_event: one per page read. start_unix is Unix seconds, as uploaded
+    // (BookOrbit keys page events on page + start second). Append-only.
+    "CREATE TABLE page_event ("
+    " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    " session_uuid TEXT NOT NULL,"
+    " content_id TEXT NOT NULL,"
+    " page INTEGER NOT NULL CHECK (page >= 0),"
+    " total_pages INTEGER NOT NULL CHECK (total_pages >= 0),"
+    " start_unix INTEGER NOT NULL,"
+    " duration_seconds INTEGER NOT NULL CHECK (duration_seconds >= 0),"
+    " created_utc INTEGER NOT NULL,"
+    " UNIQUE (content_id, page, start_unix))",
+    "CREATE INDEX page_event_book ON page_event (content_id, start_unix)",
+    "CREATE INDEX page_event_session ON page_event (session_uuid, start_unix)",
+    "CREATE TRIGGER page_event_needs_session BEFORE INSERT ON page_event"
+    " WHEN NOT EXISTS (SELECT 1 FROM session WHERE uuid = NEW.session_uuid"
+    " AND content_id = NEW.content_id AND state <> 2)"
+    " BEGIN SELECT RAISE(ABORT, 'page event without an open or finished session'); END",
+    "CREATE TRIGGER page_event_no_update BEFORE UPDATE ON page_event"
+    " BEGIN SELECT RAISE(ABORT, 'page events are never edited'); END",
+    "CREATE TRIGGER page_event_no_delete BEFORE DELETE ON page_event"
+    " BEGIN SELECT RAISE(ABORT, 'page events are append-only'); END",
+
+    // book_state.status, v2: 0 unknown, 1 unread, 2 want to read, 3 reading,
+    // 4 on hold, 5 read, 6 abandoned.
+    "UPDATE book_state SET status = CASE status WHEN 1 THEN 3 WHEN 2 THEN 5 WHEN 3 THEN 6"
+    " ELSE 0 END",
+    "CREATE TRIGGER book_state_status_insert BEFORE INSERT ON book_state"
+    " WHEN NEW.status NOT BETWEEN 0 AND 6"
+    " BEGIN SELECT RAISE(ABORT, 'unknown status'); END",
+    "CREATE TRIGGER book_state_status_update BEFORE UPDATE OF status ON book_state"
+    " WHEN NEW.status NOT BETWEEN 0 AND 6"
+    " BEGIN SELECT RAISE(ABORT, 'unknown status'); END",
+};
+
 struct Migration
 {
     int toVersion;
@@ -172,6 +260,7 @@ struct Migration
 
 const Migration kMigrations[] = {
     { 1, kVersion1, int(sizeof(kVersion1) / sizeof(kVersion1[0])) },
+    { 2, kVersion2, int(sizeof(kVersion2) / sizeof(kVersion2[0])) },
 };
 
 static_assert(sizeof(kMigrations) / sizeof(kMigrations[0]) == kSchemaVersion,
@@ -201,6 +290,22 @@ QDateTime fromDb(const QVariant &value)
         return QDateTime();
     return QDateTime::fromMSecsSinceEpoch(value.toLongLong()).toUTC();
 }
+
+qint64 toUnix(const QDateTime &utc)
+{
+    const qint64 ms = utc.toMSecsSinceEpoch();
+    return ms >= 0 ? ms / 1000 : -((-ms + 999) / 1000);
+}
+
+QDateTime fromUnix(qint64 seconds)
+{
+    return QDateTime::fromMSecsSinceEpoch(seconds * 1000).toUTC();
+}
+
+const char kPendingPageEventsFromWhere[] =
+        " page_event pe JOIN session s ON s.uuid = pe.session_uuid"
+        " WHERE s.state <> 2 AND pe.start_unix > COALESCE((SELECT bm.stats_watermark"
+        " FROM book_map bm WHERE bm.content_id = pe.content_id), 0) ";
 
 int schemaVersion(QSqlDatabase db)
 {

@@ -89,8 +89,13 @@ private slots:
         SessionRecord r = makeSession(kBook, utc(2026, 11, 1, 20, 15, 3), 754);
         r.estimated = true;
         r.approximate = true;
+        r.startPage = 40;
+        r.endPage = 44;
+        r.totalPages = 310;
+        r.state = SessionState::Open; // Ignored: an appended session is complete.
         QVERIFY(m_ledger->appendSession(&r).ok());
         QVERIFY(kUuid.match(r.uuid).hasMatch());
+        QCOMPARE(r.state, SessionState::Finished);
 
         SessionRecord second = makeSession(kBook, utc(2026, 11, 1, 18), 60);
         QVERIFY(m_ledger->appendSession(&second).ok());
@@ -111,9 +116,21 @@ private slots:
         QCOMPARE(got.end.locator, r.end.locator);
         QCOMPARE(got.end.percent, r.end.percent);
         QCOMPARE(got.pagesTurned, 4);
+        QCOMPARE(got.startPage, 40);
+        QCOMPARE(got.endPage, 44);
+        QCOMPARE(got.totalPages, 310);
+        QCOMPARE(got.state, SessionState::Finished);
         QVERIFY(got.estimated);
         QVERIFY(got.approximate);
+        QVERIFY(got.confirmed); // No page events, so nothing waits for the server.
         QVERIFY(m_ledger->sessionsForBook(QStringLiteral("other")).isEmpty());
+
+        SessionRecord one;
+        QVERIFY(m_ledger->session(r.uuid, &one).ok());
+        QCOMPARE(one.uuid, r.uuid);
+        QCOMPARE(one.activeSeconds, qint64(754));
+        QCOMPARE(m_ledger->session(QStringLiteral("nope"), &one).code, StatusCode::NotFound);
+        QCOMPARE(m_ledger->session(r.uuid, nullptr).code, StatusCode::InvalidArgument);
     }
 
     void callerUuidIsKeptAndDuplicatesRefused()
@@ -144,38 +161,52 @@ private slots:
         QVERIFY(!identity.exec(QStringLiteral("UPDATE session SET content_id = 'x'")));
     }
 
-    void unsentSessionCanBeCorrectedSentOneCannot()
+    void sessionsAreNeverDeleted()
     {
-        SessionRecord r = makeSession(kBook, utc(2026, 11, 1), 60);
-        r.approximate = true;
-        QVERIFY(m_ledger->appendSession(&r).ok());
-
-        Position fixed;
-        fixed.locator = QStringLiteral("OEBPS/ch3.xhtml#p2");
-        fixed.percent = 14.0;
-        QVERIFY(ledgerdb::correctSessionEnd(m_ledger.get(), r.uuid, fixed, false).ok());
-        SessionRecord got = m_ledger->sessionsForBook(kBook).first();
-        QCOMPARE(got.end.locator, fixed.locator);
-        QVERIFY(!got.approximate);
-
-        // Hand it to the outbox: from now on it's frozen.
-        auto outbox = createOutbox(m_ledger.get());
-        QVERIFY(outbox->enqueue(OutboxKind::Session, r.uuid, kBook, "{}").ok());
-        QCOMPARE(outbox->nextBatch(utc(2026, 11, 1, 13)).size(), 1);
-
-        Position later;
-        later.locator = QStringLiteral("OEBPS/ch4.xhtml#p1");
-        later.percent = 20.0;
-        QCOMPARE(ledgerdb::correctSessionEnd(m_ledger.get(), r.uuid, later, false).code,
-                 StatusCode::InvalidArgument);
-        QCOMPARE(m_ledger->sessionsForBook(kBook).first().end.locator, fixed.locator);
-
-        // The database refuses it too, whatever the caller does.
+        // Sessions of every state stay; the file refuses a delete whatever
+        // the caller does.
+        SessionRecord done = makeSession(kBook, utc(2026, 11, 1), 60);
+        QVERIFY(m_ledger->appendSession(&done).ok());
+        SessionRecord open = makeSession(kBook, utc(2026, 11, 2), 0);
+        QVERIFY(m_ledger->beginSession(&open).ok());
         QSqlQuery q(ledgerdb::database(m_ledger.get()));
-        QVERIFY(!q.exec(QStringLiteral("UPDATE session SET end_percent = 99")));
-        QCOMPARE(ledgerdb::correctSessionEnd(m_ledger.get(), QStringLiteral("nope"), later, false)
-                         .code,
-                 StatusCode::NotFound);
+        QVERIFY(!q.exec(QStringLiteral("DELETE FROM session WHERE state = 0")));
+        QVERIFY(!q.exec(QStringLiteral("DELETE FROM session WHERE state = 1")));
+        QCOMPARE(m_ledger->sessionsForBook(kBook).size(), 2);
+    }
+
+    // --- server row ---
+
+    void serverRow()
+    {
+        QVERIFY(m_ledger->pullCursor().isEmpty());
+        QVERIFY(m_ledger->lastPullUtc().isNull());
+        QVERIFY(m_ledger->lastSyncUtc().isNull());
+        QVERIFY(!m_ledger->sweepOwed());
+
+        QVERIFY(m_ledger->setPullCursor(QStringLiteral("c-17"), utc(2026, 11, 1, 9)).ok());
+        QVERIFY(m_ledger->setLastSyncUtc(utc(2026, 11, 1, 9, 1)).ok());
+        QVERIFY(m_ledger->setSweepOwed(true).ok());
+        QCOMPARE(m_ledger->pullCursor(), QStringLiteral("c-17"));
+        QCOMPARE(m_ledger->lastPullUtc(), utc(2026, 11, 1, 9));
+        QCOMPARE(m_ledger->lastSyncUtc(), utc(2026, 11, 1, 9, 1));
+        QVERIFY(m_ledger->sweepOwed());
+        const QString device = m_ledger->deviceId();
+
+        // Survives a close and reopen (USB).
+        m_ledger->close();
+        QVERIFY(m_ledger->pullCursor().isEmpty()); // Closed: nothing to read.
+        QCOMPARE(m_ledger->setSweepOwed(false).code, StatusCode::Busy);
+        QVERIFY(m_ledger->open().ok());
+        QCOMPARE(m_ledger->pullCursor(), QStringLiteral("c-17"));
+        QVERIFY(m_ledger->sweepOwed());
+        QCOMPARE(m_ledger->deviceId(), device);
+
+        QVERIFY(m_ledger->setSweepOwed(false).ok());
+        QVERIFY(!m_ledger->sweepOwed());
+        QCOMPARE(m_ledger->setPullCursor(QStringLiteral("x"), QDateTime()).code,
+                 StatusCode::InvalidArgument);
+        QCOMPARE(m_ledger->setLastSyncUtc(QDateTime()).code, StatusCode::InvalidArgument);
     }
 
     // --- progress ---
@@ -193,6 +224,8 @@ private slots:
         QCOMPARE(p.local.percent, 41.0);
         QCOMPARE(p.localUpdatedUtc, utc(2026, 11, 1, 10));
         QVERIFY(!p.hasRemote);
+        QVERIFY(kUuid.match(p.uuid).hasMatch());
+        const QString progressUuid = p.uuid;
 
         Position remote{ QStringLiteral("/body/DocFragment[12]/body/p[3]/text().0"), 54.0 };
         QVERIFY(m_ledger->setRemoteProgress(kBook, remote, utc(2026, 11, 1, 9), "Phone").ok());
@@ -202,6 +235,7 @@ private slots:
         QCOMPARE(p.remote.percent, 54.0);
         QCOMPARE(p.remoteDevice, QStringLiteral("Phone"));
         QCOMPARE(p.local.percent, 41.0); // Remote never overwrites local.
+        QCOMPARE(p.uuid, progressUuid); // Stable per book.
 
         // An older remote report doesn't replace a newer one.
         Position stale{ QStringLiteral("x"), 20.0 };
@@ -296,14 +330,14 @@ private slots:
         // Remote: status newer (applies), rating older (doesn't).
         BookStateRecord remote;
         remote.contentId = kBook;
-        remote.status = ReadStatus::Finished;
+        remote.status = ReadStatus::Read;
         remote.statusRemoteUpdatedUtc = utc(2026, 11, 1, 12);
         remote.rating = 5;
         remote.ratingRemoteUpdatedUtc = utc(2026, 11, 1, 13);
         QVERIFY(m_ledger->mergeRemoteState(remote).ok());
 
         QVERIFY(m_ledger->bookState(kBook, &st).ok());
-        QCOMPARE(st.status, ReadStatus::Finished);
+        QCOMPARE(st.status, ReadStatus::Read);
         QCOMPARE(st.statusLocalUpdatedUtc, utc(2026, 11, 1, 10));
         QCOMPARE(st.statusRemoteUpdatedUtc, utc(2026, 11, 1, 12));
         QCOMPARE(st.rating, 3);
@@ -315,7 +349,7 @@ private slots:
         remote.statusRemoteUpdatedUtc = utc(2026, 11, 1, 11);
         QVERIFY(m_ledger->mergeRemoteState(remote).ok());
         QVERIFY(m_ledger->bookState(kBook, &st).ok());
-        QCOMPARE(st.status, ReadStatus::Finished);
+        QCOMPARE(st.status, ReadStatus::Read);
 
         // Equal times: the local value stays.
         remote.status = ReadStatus::Abandoned;
@@ -324,7 +358,7 @@ private slots:
         remote.ratingRemoteUpdatedUtc = utc(2026, 11, 1, 14);
         QVERIFY(m_ledger->mergeRemoteState(remote).ok());
         QVERIFY(m_ledger->bookState(kBook, &st).ok());
-        QCOMPARE(st.status, ReadStatus::Finished);
+        QCOMPARE(st.status, ReadStatus::Read);
         QCOMPARE(st.rating, 3);
 
         // A newer local change wins again.
@@ -344,6 +378,32 @@ private slots:
         QCOMPARE(m_ledger->setLocalRating(kBook, 6, utc(2026, 11, 2)).code,
                  StatusCode::InvalidArgument);
         QCOMPARE(m_ledger->setLocalRating(kBook, -1, utc(2026, 11, 2)).code,
+                 StatusCode::InvalidArgument);
+    }
+
+    void allSixStatusesRoundTripWithStableUuid()
+    {
+        const QVector<ReadStatus> all = QVector<ReadStatus>()
+                << ReadStatus::Unread << ReadStatus::WantToRead << ReadStatus::Reading
+                << ReadStatus::OnHold << ReadStatus::Read << ReadStatus::Abandoned
+                << ReadStatus::Unknown;
+        QString uuid;
+        QDateTime at = utc(2026, 11, 1);
+        for (ReadStatus status : all) {
+            at = at.addSecs(60);
+            QVERIFY(m_ledger->setLocalStatus(kBook, status, at).ok());
+            BookStateRecord st;
+            QVERIFY(m_ledger->bookState(kBook, &st).ok());
+            QCOMPARE(st.status, status);
+            QVERIFY(kUuid.match(st.uuid).hasMatch());
+            if (uuid.isEmpty())
+                uuid = st.uuid;
+            QCOMPARE(st.uuid, uuid); // The outbox entityUuid for Status items.
+        }
+        // The file refuses a status outside BookOrbit's six (plus unknown).
+        QSqlQuery q(ledgerdb::database(m_ledger.get()));
+        QVERIFY(!q.exec(QStringLiteral("UPDATE book_state SET status = 7")));
+        QCOMPARE(m_ledger->setLocalStatus(kBook, ReadStatus(42), at).code,
                  StatusCode::InvalidArgument);
     }
 

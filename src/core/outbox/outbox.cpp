@@ -3,6 +3,13 @@
 // SPEC: On-device data model ("Tables": outbox, "Removed only after the
 // server confirms"); Sync engine ("Order of a full sync", "Networking").
 //
+// Kinds 1..3 only: rows of kind 0 (v1 "session" items, from before reading
+// went by page events) stay in the table untouched and are ignored here.
+//
+// A book's Position items are held back while the book has page events above
+// its watermark (ledgerdb::kPendingPageEventsFromWhere), so a position never
+// reaches BookOrbit before the reading behind it.
+//
 // One row per kind + entity UUID. Re-enqueueing replaces the payload and
 // bumps payload_rev; nextBatch() records the revision it handed out in
 // sent_rev. markConfirmed() removes a row only when the confirmed revision is
@@ -25,7 +32,6 @@ const char kLog[] = "outbox";
 bool kindOk(OutboxKind kind)
 {
     switch (kind) {
-    case OutboxKind::Session:
     case OutboxKind::Position:
     case OutboxKind::Annotation:
     case OutboxKind::Status:
@@ -118,18 +124,6 @@ Status SqlOutbox::enqueue(OutboxKind kind, const QString &entityUuid, const QStr
     if (!t.active())
         return sqlFailure(d.lastError(), "begin");
     QSqlQuery q(d);
-
-    if (kind == OutboxKind::Session) {
-        // A session the server has confirmed never goes out again.
-        q.prepare(QStringLiteral("SELECT confirmed_utc FROM session WHERE uuid = ?"));
-        q.addBindValue(entityUuid);
-        if (!q.exec())
-            return sqlFailure(q.lastError(), "check session");
-        if (q.next() && !q.value(0).isNull())
-            return Status::error(StatusCode::InvalidArgument,
-                                 QStringLiteral("session %1 already confirmed").arg(entityUuid));
-    }
-
     q.prepare(QStringLiteral("UPDATE outbox SET payload = ?, content_id = ?,"
                              " payload_rev = payload_rev + 1 WHERE kind = ? AND entity_uuid = ?"));
     q.addBindValue(payload);
@@ -162,7 +156,14 @@ QVector<OutboxItem> SqlOutbox::nextBatch(const QDateTime &nowUtc, int max, const
         return out;
 
     const QVariant now = ledgerdb::toDb(nowUtc);
-    const QString ready = QStringLiteral("(next_retry_utc IS NULL OR next_retry_utc <= ?)")
+    // Ready, of a live kind, and not a Position of a book with unsent reading.
+    const QString ready =
+            QStringLiteral("kind BETWEEN %1 AND %2 AND (next_retry_utc IS NULL OR"
+                           " next_retry_utc <= ?) AND NOT (kind = %1 AND content_id IN"
+                           " (SELECT pe.content_id FROM")
+                    .arg(int(OutboxKind::Position))
+                    .arg(int(OutboxKind::Status))
+            + QLatin1String(ledgerdb::kPendingPageEventsFromWhere) + QStringLiteral("))")
             + (contentId.isEmpty() ? QString() : QStringLiteral(" AND content_id = ?"));
 
     QSqlQuery q(d);
@@ -203,8 +204,7 @@ QVector<OutboxItem> SqlOutbox::nextBatch(const QDateTime &nowUtc, int max, const
         out << item;
     }
 
-    // Remember which revision goes out; freeze sessions from here on (the
-    // server may have them even if the reply never arrives).
+    // Remember which revision goes out.
     Transaction t(d);
     bool ok = t.active();
     for (const OutboxItem &item : out) {
@@ -219,13 +219,6 @@ QVector<OutboxItem> SqlOutbox::nextBatch(const QDateTime &nowUtc, int max, const
         q.addBindValue(int(OutboxKind::Annotation));
         q.addBindValue(item.id);
         ok = q.exec();
-        if (ok && item.kind == OutboxKind::Session) {
-            q.prepare(QStringLiteral("UPDATE session SET sent_utc = ? WHERE uuid = ?"
-                                     " AND sent_utc IS NULL"));
-            q.addBindValue(now);
-            q.addBindValue(item.entityUuid);
-            ok = q.exec();
-        }
     }
     if (!ok || !t.commit()) {
         sqlFailure(q.lastError().isValid() ? q.lastError() : d.lastError(), "mark batch sent");
@@ -241,7 +234,6 @@ Status SqlOutbox::markConfirmed(const QVector<qint64> &ids)
         return closedStatus();
     if (ids.isEmpty())
         return Status::success();
-    const QVariant now = ledgerdb::toDb(QDateTime::currentDateTimeUtc());
 
     Transaction t(d);
     if (!t.active())
@@ -250,12 +242,14 @@ Status SqlOutbox::markConfirmed(const QVector<qint64> &ids)
     int removed = 0;
     for (qint64 id : ids) {
         q.prepare(QStringLiteral("SELECT kind, entity_uuid, payload_rev, sent_rev, sent_tombstone"
-                                 " FROM outbox WHERE id = ?"));
+                                 " FROM outbox WHERE id = ? AND kind BETWEEN ? AND ?"));
         q.addBindValue(id);
+        q.addBindValue(int(OutboxKind::Position));
+        q.addBindValue(int(OutboxKind::Status));
         if (!q.exec())
             return sqlFailure(q.lastError(), "read item");
         if (!q.next())
-            continue; // Already confirmed: confirming twice is harmless.
+            continue; // Already confirmed (harmless), or a v1 row of kind 0 (kept).
         const int kind = q.value(0).toInt();
         const QString uuid = q.value(1).toString();
         const qint64 sentRev = q.value(3).toLongLong();
@@ -282,14 +276,7 @@ Status SqlOutbox::markConfirmed(const QVector<qint64> &ids)
             return sqlFailure(q.lastError(), "remove item");
         ++removed;
 
-        if (kind == int(OutboxKind::Session)) {
-            q.prepare(QStringLiteral("UPDATE session SET confirmed_utc = ? WHERE uuid = ?"
-                                     " AND confirmed_utc IS NULL"));
-            q.addBindValue(now);
-            q.addBindValue(uuid);
-            if (!q.exec())
-                return sqlFailure(q.lastError(), "confirm session");
-        } else if (kind == int(OutboxKind::Annotation) && sentDeletion) {
+        if (kind == int(OutboxKind::Annotation) && sentDeletion) {
             // The confirmed upload was the deletion: the tombstone has done
             // its job. A confirmed earlier edit leaves it for the deletion
             // still to be queued. (If the annotation was edited back to life
@@ -323,8 +310,11 @@ Status SqlOutbox::markFailed(const QVector<qint64> &ids, const QDateTime &nowUtc
         return sqlFailure(d.lastError(), "begin");
     QSqlQuery q(d);
     for (qint64 id : ids) {
-        q.prepare(QStringLiteral("SELECT attempts FROM outbox WHERE id = ?"));
+        q.prepare(QStringLiteral(
+                "SELECT attempts FROM outbox WHERE id = ? AND kind BETWEEN ? AND ?"));
         q.addBindValue(id);
+        q.addBindValue(int(OutboxKind::Position));
+        q.addBindValue(int(OutboxKind::Status));
         if (!q.exec())
             return sqlFailure(q.lastError(), "read item");
         if (!q.next())
@@ -348,8 +338,17 @@ int SqlOutbox::pendingCount()
     QSqlDatabase d = db();
     if (!d.isValid())
         return 0;
+    // Outbox items of the live kinds, plus sessions with page events still
+    // above their book's watermark (Ledger::unconfirmedSessions()).
     QSqlQuery q(d);
-    if (!q.exec(QStringLiteral("SELECT count(*) FROM outbox")) || !q.next()) {
+    if (!q.exec(QStringLiteral("SELECT (SELECT count(*) FROM outbox WHERE kind BETWEEN %1 AND %2)"
+                               " + (SELECT count(*) FROM session WHERE state <> 2 AND EXISTS"
+                               " (SELECT 1 FROM page_event pe WHERE pe.session_uuid = session.uuid"
+                               " AND pe.start_unix > COALESCE((SELECT bm.stats_watermark FROM"
+                               " book_map bm WHERE bm.content_id = session.content_id), 0)))")
+                        .arg(int(OutboxKind::Position))
+                        .arg(int(OutboxKind::Status)))
+        || !q.next()) {
         sqlFailure(q.lastError(), "count");
         return 0;
     }
