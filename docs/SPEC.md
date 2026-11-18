@@ -15,7 +15,7 @@ It replaces BookOrbit's built-in Kobo sync. That sync builds reading sessions pa
 | Target device | Kobo Clara Colour and Clara BW (6") first, then Libra Colour (7"); firmware 4.46.23852 (Qt 5) first, Qt 6 firmware (5.x and 6.x) later |
 | Relation to Kobalt | Separate companion mod; Kobalt is not modified |
 | Home screen | The companion is the home screen; books open straight into Kobalt, and Kobo's own home is at the top of the More tab |
-| Wi-Fi triggers | Just before sleep, on wake, and on book close |
+| Wi-Fi triggers | Just before sleep, on wake, and on book close; while reading, every few minutes when Wi-Fi is already on |
 | Reading progress | Two-way; ask before jumping to a newer position from another device |
 | Highlights and notes | Kobo to BookOrbit only, until Kobalt offers a way to import highlights |
 | Collections | BookOrbit is the source; mirrored one-way into Nickel collections, Kobo edits overwritten |
@@ -33,7 +33,8 @@ Checked against Kobalt's source, BookOrbit's KOReader plugin and the Clara Colou
 | --- | --- |
 | BookOrbit's Kobo sync | Removed. The Kobo signs back in to Kobo's own servers, and Smalt handles everything to do with BookOrbit |
 | BookOrbit connection | The protocol BookOrbit's own KOReader plugin uses (`/api/v1/koreader/…`), with KOReader credentials; no API key |
-| Reading sessions | Recorded by Smalt's hooks, with active time from Nickel's `TimeSpentReading`; uploaded as page events, then a sweep so BookOrbit stops estimating for this device |
+| Reading sessions | Recorded by Smalt as page events, one per page read, from the page turns Kobalt reports through Nickel, with Smalt's hooks for the boundaries and Nickel's `TimeSpentReading` as a cross-check. BookOrbit builds the sessions from the page events; a sweep after each upload tells it this device measures its own reading |
+| Live sync while reading | Finished pages are pushed every few minutes while Wi-Fi is on, so BookOrbit's session grows as you read; offline, they wait in the ledger with their real times |
 | Device identity | One stable, unique device ID per Kobo, kept in the ledger |
 | Book identity | KOReader's partial MD5 of each file, matched once through the server's match check |
 | Positions | KOReader-style percentage plus XPointer; Kobalt's CREngine positions are compatible |
@@ -102,35 +103,65 @@ The ledger sits at `.adds/bookorbit/ledger.sqlite` on the user partition, the on
 
 | Table | Holds | Notes |
 | --- | --- | --- |
-| `server` | Server URL, device ID, sync cursors | One row; the credentials stay in a separate config file |
-| `book_map` | Nickel ContentID ↔ BookOrbit book and file IDs, file hash, how it got here | Written when the mod downloads a book; matched once for existing books |
-| `session` | One row per reading session: UUID, book, start and end time (UTC), active seconds, start and end position and percentage, pages turned | Append-only; never edited after it's sent |
+| `server` | Server URL, device ID, sync cursors, whether a sweep is owed | One row; the credentials stay in a separate config file |
+| `book_map` | Nickel ContentID ↔ BookOrbit book and file IDs, file hash, how it got here, page-stats watermark | Written when the mod downloads a book; matched once for existing books. The watermark is the start time of the newest page event BookOrbit has acknowledged for this file from this device |
+| `session` | One row per reading session: UUID, book, start and end time (UTC), active seconds, start and end position and percentage, pages turned, whether the end position is approximate | Append-only. Its times are final once its page events are sent; its end position can still be corrected (see Correcting a session) |
+| `page_event` | One row per page read: session UUID, book, page, total pages, start time (UTC), seconds on the page | Written when you leave the page; sent to BookOrbit as page events; never edited |
 | `progress` | Latest local position per book, with timestamp | Also holds the latest known remote position, for the offline jump prompt |
 | `annotation` | Local UUID, remote ID, anchor, highlighted text plus surrounding text, note, colour, created, updated and deleted times | Deletions kept as tombstones until the server confirms them |
-| `book_state` | Status (reading, finished, abandoned) and rating, each with local and remote update times | Newest change wins per field |
+| `book_state` | Status, in BookOrbit's six values (unread, want to read, reading, on hold, read, abandoned), and rating, each with local and remote update times | Newest change wins per field |
 | `outbox` | Pending uploads: kind, entity UUID, payload, attempts, next retry time | Removed only after the server confirms |
 | `remote_cache` | Collections, catalogue pages and cover thumbnails for the browser | Disposable; safe to wipe |
 | `pending_decision` | Books removed upstream, waiting for you to choose | Drives the "Remove from device?" prompt |
 
 ### How sessions are captured
 
-Two sources, cross-checked:
+Three sources, cross-checked:
 
-1. **The mod's own hooks.** It records book open and close, sleep and wake, and USB connect with the device clock and a monotonic clock. These mark hard session boundaries even if nothing else does.
-2. **Nickel's counters.** Kobalt adds each interval's active reading seconds to the book's `TimeSpentReading` when the interval ends, and writes the position before sleep and on close. The mod takes a session's active time from the change in `TimeSpentReading` and its end position from the `content` row. Nickel's per-session analytics events can't be relied on: on 4.46 they're dropped in some configurations, and the test device had none.
+1. **Page turns.** Kobalt reports every page turn through Nickel's event engine (`pageTurned`; `docs/VERIFY-FINDINGS.md` item 1). The mod observes these events without changing them and writes one page event for each page you leave: page, total pages, start time and seconds on the page. The page on screen when the book closes or the device sleeps ends at that moment.
+2. **The mod's own hooks.** It records book open and close, sleep and wake, and USB connect with the device clock and a monotonic clock. These mark hard session boundaries even if nothing else does.
+3. **Nickel's counters.** Kobalt adds each interval's active reading seconds to the book's `TimeSpentReading` when the interval ends, and writes the position before sleep and on close. The mod cross-checks a session's active time against the change in `TimeSpentReading` and takes its end position from the `content` row. If page turns can't be observed, the mod builds page events from the session's start, active time and start and end pages, and marks the session estimated. Nickel's per-session analytics events can't be relied on: on 4.46 they're dropped in some configurations, and the test device had none.
 
-The mod's own boundaries win when the two disagree. Sessions under 10 seconds are dropped, matching BookOrbit's own rule for KOReader.
+The mod's own boundaries win when the sources disagree. Sessions under 10 seconds are dropped, matching BookOrbit's own rule for KOReader.
 
 Every ledger row has a UUID made on the device. Uploads are acknowledged with a per-book watermark, so a retried or partial upload can never count the same reading twice.
 
+### How BookOrbit builds sessions
+
+BookOrbit doesn't receive sessions; it builds them from page events (`docs/VERIFY-FINDINGS.md` item 10):
+
+- A book's page events from one device belong to the same session as long as each gap between them is 30 minutes or less; a longer gap starts a new session. The 30 minutes are fixed in the server.
+- A session's reading time is the sum of its page durations, so gaps such as sleep are never counted.
+- A session is identified by its first page event, so page events sent later extend the same session instead of creating a new one.
+- An event BookOrbit already has can't be changed: sending it again is ignored. So the mod sends a page event only once you've left that page and its duration is final.
+
 ### Sleeping inside a book
 
-Putting the Kobo to sleep without closing the book is treated as the end of a session, the same as closing it.
+Putting the Kobo to sleep without closing the book pauses the session; how long you sleep decides whether it continues.
 
-- **Sleep ends the session.** Its end time is the moment of sleep, and its end position is the page on screen. The session is written to the ledger and queued before the pre-sleep sync decides whether to connect.
-- **Wake starts a new session** for the same book. A session is never stretched across sleep, so the hours the device slept are never counted as reading.
-- **If the position isn't fresh at sleep** (Kobalt hasn't saved it to Nickel yet), the mod records the last saved position, marks it approximate, and corrects it at the next sleep or close.
+- **Sleep pauses the session.** The page on screen ends at the moment of sleep, so the time asleep is never counted as reading. The session so far is written to the ledger, and its finished page events are queued, before the pre-sleep sync decides whether to connect.
+- **New session after sleep** is a setting with the same choices as Kobalt's: 15 minutes (default), 1 hour, 4 hours, 6 hours, 12 hours or Never. Waking within that time continues the same session (same UUID); a longer sleep ends it at the moment of sleep, and reading after wake starts a new one.
+- **BookOrbit groups by its own 30 minutes**, so its sessions can differ from the ledger's and Kobalt's; the reading time is the same in every case, because sleep is never counted:
+
+  | You sleep for | Smalt and Kobalt (15-minute setting) | BookOrbit |
+  | --- | --- | --- |
+  | 10 minutes | One session | One session |
+  | 20 minutes | Two sessions | One session |
+  | 45 minutes | Two sessions | Two sessions |
+
+- **If the position isn't fresh at sleep** (Kobalt hasn't saved it to Nickel yet), the mod records the last saved position, marks it approximate, and corrects it at the next wake, sleep or close.
 - **Pulled changes for that book wait**, because the book never closes. Positions are handled with a prompt on wake instead (see Reading progress); highlights and status wait for the next close.
+
+### Correcting a session
+
+A session's times are final once its page events are sent. Its end position can be corrected at any time; a correction changes the ledger row and sends a new position, and never changes a time. Example:
+
+| Time | What happens |
+| --- | --- |
+| 21:00 | You open the book at 41% and read. Each page turn records a page event. |
+| 21:47 | Sleep. The session so far is 21:00–21:47, 44 minutes read. Kobalt hasn't saved its position yet, so Nickel still says 41%: the mod records 41% and marks it approximate. |
+| 21:47 | The pre-sleep sync sends the page events: BookOrbit shows a session from 21:00 to 21:47 with 44 minutes read. The approximate position isn't sent. |
+| 22:30 | Wake. Nickel now says 54%, Chapter 12. The mod corrects the session's end to 54%, clears the approximate mark and sends the 54% position. No time changes. |
 
 ## Sync engine
 
@@ -141,16 +172,21 @@ Sync is opportunistic and bounded: it runs at a few natural moments, brings Wi-F
 | Trigger | What runs | Limits |
 | --- | --- | --- |
 | Book closed | Push that book's session, position, highlights and status | Brings Wi-Fi up only if the outbox has items |
-| Just before sleep | End the open book's session in the ledger, then push the whole outbox; quick pull of remote positions | Holds sleep for at most 15 s; skipped below 20% battery or with an empty outbox and a pull under 6 h old |
+| While reading | Push the open book's finished page events since its watermark, so BookOrbit's session grows as you read | Only when Wi-Fi is already connected (default), every 5 minutes; interval and mode in Settings, Push while reading. With **Connect briefly**, the mod turns Wi-Fi on for the push (every 15 minutes by default) and puts it back the way it found it. Never blocks a page turn |
+| Just before sleep | Write the open book's session so far to the ledger, then push the whole outbox; quick pull of remote positions | Holds sleep for at most 15 s; skipped below 20% battery or with an empty outbox and a pull under 6 h old |
 | Wake | Pull first (positions, highlights, status, collections), then push | Runs in the background; never blocks the screen |
 | Wi-Fi already on | Full sync | Free, because no connection is needed |
 | "Sync now" | Full sync, with progress shown | Manual, no limits except a 60 s timeout |
 
-A sync that finished successfully in the last 5 minutes, with an empty outbox, skips any trigger except "Sync now". Book close is often followed by sleep, so the two collapse into one sync.
+A sync that finished successfully in the last 5 minutes, with an empty outbox, skips any trigger except "Sync now" and "While reading". Book close is often followed by sleep, so the two collapse into one sync.
+
+With the push while reading, an hour of reading with Wi-Fi on shows in BookOrbit as one session that grows every 5 minutes (5, 10, 15 … 60 minutes) and gets its last page at close or sleep. Offline, the same page events wait in the ledger and arrive later in one upload; BookOrbit then shows the same session with the same times.
+
+Nickel turns Wi-Fi off by itself after about two minutes without network traffic (Kobalt `doc/reader/sleep.md`), and Kobalt's optional Wi-Fi saver turns it off when a book opens, so with the default mode the push while reading often waits for the next close or sleep.
 
 ### Order of a full sync
 
-1. **Push** the outbox, oldest first: sessions, then positions, highlights and notes, then status and ratings. Batches of 20; each batch is one request.
+1. **Push** the outbox, oldest first: sessions (page events, then a sweep), then positions, highlights and notes, then status and ratings. Batches of 20; each batch is one request. A book's position is never pushed before that book's unsent page events, because BookOrbit would estimate a session from a position with no reading behind it; if the server rejects those page events for good (a 4xx), the mod logs it and lets the position go.
 2. **Pull** changes since the last cursor: positions, highlights, status and ratings, collections, and books deleted upstream.
 3. **Apply** what was pulled, but only where safe: nothing is written to Nickel's database for a book that is open, and those writes wait for book close. A book left open across sleep gets a position prompt on wake instead.
 4. **Refresh** the browser cache and cover thumbnails if time remains.
@@ -161,8 +197,8 @@ Pushing first means the server already has this device's reading before it answe
 
 | Data | Rule |
 | --- | --- |
-| Sessions | Append-only; no conflicts possible |
-| Position | Newest timestamp wins, but a newer remote position is offered as a prompt, never applied silently |
+| Sessions | Page events are append-only and never edited once sent (BookOrbit ignores a resent event); no conflicts possible. A session's end position can be corrected locally and is then sent as a position |
+| Position | Newest timestamp wins, but a newer remote position is offered as a prompt, never applied silently. A local position is never pushed before its book's unsent page events |
 | Highlights and notes | Per highlight: newest edit wins; deletions win over edits made before them |
 | Status and rating | Per field: newest change wins |
 | Collections | BookOrbit always wins |
@@ -242,12 +278,19 @@ BookOrbit is the source. The mod creates and updates a Nickel collection for eac
 
 ### Status and ratings
 
+BookOrbit has six statuses; Nickel has three (unread, reading, finished). The ledger keeps BookOrbit's six, so nothing is lost, and maps them to Nickel:
+
 | BookOrbit | On the Kobo |
 | --- | --- |
 | Reading | Nickel's "reading" status |
-| Finished | Nickel's "finished" status |
+| On hold | Nickel's "reading" status; shown as On hold in the browser |
+| Read | Nickel's "finished" status |
+| Unread | Nickel's "unread" status |
+| Want to read | Nickel's "unread" status; shown in the browser, and optionally mirrored as a "Want to read" collection |
 | Abandoned | No Nickel equivalent: kept in the ledger, shown in the browser, and optionally mirrored as an "Abandoned" collection |
 | Rating (1 to 5 stars) | Nickel's book rating |
+
+A change made in Nickel maps back the other way: reading becomes Reading (or stays On hold if it was), finished becomes Read, unread becomes Unread (or stays Want to read if it was).
 
 Both directions, newest change per field wins.
 
@@ -289,7 +332,9 @@ The companion should be invisible while you read and quiet the rest of the time:
 
 - Server URL, KOReader username and password, with a **Test connection** button.
 - A switch for each sync trigger, plus the battery threshold for pre-sleep sync.
-- Collection mirroring on or off, and whether to keep an "Abandoned" collection.
+- **Push while reading:** Off, Only when connected (default) or Connect briefly, with the interval: 5 minutes (default for Only when connected), 10, 15 (default for Connect briefly) or 30.
+- **New session after sleep:** 15 minutes (default), 1 hour, 4 hours, 6 hours, 12 hours or Never.
+- Collection mirroring on or off, and whether to keep "Abandoned" and "Want to read" collections.
 - Download folder.
 - **Export log** to the user partition, for debugging over USB.
 
@@ -420,6 +465,12 @@ The biggest unknowns are about Kobalt's behaviour and BookOrbit's API, not about
 | Pre-sleep sync drains the battery | Shorter battery life | 15 s cap, battery threshold, skip when nothing is queued |
 | Positions don't convert exactly | Jump lands near, not on, the right spot | Chapter plus percentage fallback; the prompt shows both positions |
 | BookOrbit changes the plugin protocol | Sync stops working | Check the server's capability list before using a feature; BookOrbit keeps this protocol compatible for its own plugin |
+| BookOrbit groups sessions at a fixed 30 minutes | Sleeps of 15–30 minutes show as one session in BookOrbit and two on the Kobo | Reading time is the same either way; ask BookOrbit to make the gap configurable if it matters |
+| Push while reading drains the battery with Connect briefly | Shorter battery life | Off by default; Only when connected never turns Wi-Fi on |
+
+### Open questions
+
+- **A page left on screen for a long time** (device on, nobody reading) becomes one long page event, and BookOrbit counts all of it; Kobalt has no inactivity timeout either. Should a page longer than some limit (for example 10 minutes) count as away?
 
 ### Build phases
 

@@ -23,3 +23,7 @@ Feature design (Collections, Status and ratings, Books removed upstream), Copy.
 ## Acceptance tests
 
 Collection changes upstream propagate; user collections untouched; each removal choice behaves as specified.
+
+## Addendum (after wave 1: session decisions)
+
+Status uses BookOrbit's six values and the mapping to Nickel in `docs/SPEC.md` ("Status and ratings"), including the optional "Want to read" collection alongside "Abandoned".
