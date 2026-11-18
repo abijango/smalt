@@ -1,4 +1,4 @@
-#include "bookorbit/page_stats_uploader.h"
+#include "smalt/page_stats.h"
 
 #include "smalt/log.h"
 

@@ -1,6 +1,6 @@
 // Acceptance: "Page-stats retries never double-count (watermark respected); a
-// sweep follows every upload." (src/bookorbit/page_stats_uploader.h)
-#include "bookorbit/page_stats_uploader.h"
+// sweep follows every upload." (include/smalt/page_stats.h)
+#include "smalt/page_stats.h"
 #include "bookorbit/qt_bookorbit_client.h"
 #include "mock_server.h"
 
@@ -514,6 +514,37 @@ private slots:
                                         .toArray();
         QCOMPARE(sent.at(0).toObject().value("startTime").toDouble(), double(kBase + 3 * 60));
         QCOMPARE(sent.at(2).toObject().value("startTime").toDouble(), double(kBase + 5 * 60));
+    }
+
+    void aLivePushEveryFiveMinutesSendsOnlyTheNewEventsAndOneSweepEach()
+    {
+        // The "While reading" trigger: a handful of events per push, no events between.
+        QMap<QString, qint64> store;
+        QVector<PageEvent> all = events(3);
+        auto push = [&]() { return upload({ book(1, all) }, &store); };
+
+        auto r1 = push();
+        QCOMPARE(r1->result.eventsSent, 3);
+        QVERIFY(r1->result.sweepSent);
+        QCOMPARE(m_server.requests().size(), 2); // one page-stats, one sweep
+
+        // Nothing read since: no request at all, no sweep.
+        m_server.requests(true);
+        auto r2 = push();
+        QVERIFY(r2->result.complete);
+        QCOMPARE(r2->result.requests, 0);
+        QVERIFY(!r2->result.sweepSent);
+        QCOMPARE(m_server.requests().size(), 0);
+
+        // Two more pages read: only those go, with one sweep.
+        all += events(2, kBase + 600);
+        auto r3 = push();
+        QCOMPARE(r3->result.eventsSent, 2);
+        QCOMPARE(r3->result.eventsAccepted, 2);
+        QCOMPARE(r3->result.eventsDuplicate, 0);
+        QCOMPARE(paths(), (QStringList{ "/plugin/page-stats", "/plugin/sweeps" }));
+        QCOMPARE(eventsInRequest(0), 2);
+        QCOMPARE(storedEvents(1), 5);
     }
 };
 

@@ -58,7 +58,7 @@ HttpResult classify(int status, QNetworkReply *reply)
     case QNetworkReply::TimeoutError:
         return makeResult(ErrorKind::Timeout, status, what);
     case QNetworkReply::SslHandshakeFailedError:
-        return makeResult(ErrorKind::Offline, status,
+        return makeResult(ErrorKind::TlsError, status,
                           QStringLiteral("TLS handshake failed: ") + what);
     case QNetworkReply::NoError:
         return makeResult(ErrorKind::Offline, status, QStringLiteral("no HTTP response"));
@@ -99,7 +99,7 @@ void Transfer::start()
         return;
     m_started = true;
     if (m_spec.failClosedTls && m_url.scheme() == QLatin1String("https")) {
-        finishWith(makeResult(ErrorKind::Offline, 0,
+        finishWith(makeResult(ErrorKind::TlsError, 0,
                               QStringLiteral("TLS: the CA bundle holds no certificates")));
         return;
     }

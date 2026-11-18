@@ -82,7 +82,7 @@ private slots:
     void aBundleThatDoesNotHoldTheServersCertificateIsRefused()
     {
         const auto r = checkAuth(m_dir.filePath("other.pem"));
-        QCOMPARE(r.result.error, ErrorKind::Offline);
+        QCOMPARE(r.result.error, ErrorKind::TlsError);
         QVERIFY2(r.result.message.contains("TLS"), qPrintable(r.result.message));
         QVERIFY(!r.value);
     }
@@ -103,7 +103,7 @@ private slots:
     void withoutABundleTheSystemCertificatesDecideAndRefuseASelfSignedOne()
     {
         const auto r = checkAuth(QString());
-        QCOMPARE(r.result.error, ErrorKind::Offline);
+        QCOMPARE(r.result.error, ErrorKind::TlsError);
     }
 };
 

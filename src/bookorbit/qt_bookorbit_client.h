@@ -53,6 +53,15 @@ public:
     RequestId capabilities(Callback<QJsonObject> done) override;
     bool hasCapability(const QString &name) const override;
 
+    // True once a capability list has been fetched (or a 4xx confirmed that the
+    // server has none). hasCapability() is false while this is false.
+    bool capabilitiesKnown() const override { return m_capsKnown; }
+
+    QString serverVersion() const override { return m_serverVersion; }
+
+    // The newest libraryVersion seen in a match-check or sweeps reply (empty if none).
+    QString libraryVersion() const override { return m_libraryVersion; }
+
     RequestId matchCheck(const QVector<MatchQuery> &books,
                          Callback<QVector<MatchResult>> done) override;
 
@@ -64,8 +73,9 @@ public:
                               Callback<QJsonObject> done) override;
     RequestId sendSweep(const QJsonObject &counts, Callback<QJsonObject> done) override;
 
-    RequestId exchangeAnnotations(const QString &document, const QJsonArray &annotations,
-                                  Callback<QJsonObject> done) override;
+    RequestId exchangeAnnotations(const QString &document, const QJsonArray &changes,
+                                  const QJsonArray &keys, bool keysComplete,
+                                  const QString &sidecarState, Callback<QJsonObject> done) override;
     RequestId ackAnnotations(const QString &document, const QJsonObject &ack,
                              Callback<bool> done) override;
 
@@ -86,24 +96,7 @@ public:
                        Callback<QString> done) override;
     RequestId thumbnail(qint64 bookId, Callback<QByteArray> done) override;
 
-    // --- Beyond the interface (see the report's "Proposed interface changes") ---
-
-    // True once a capability list has been fetched (or a 4xx confirmed that the
-    // server has none). hasCapability() is false while this is false.
-    bool capabilitiesKnown() const { return m_capsKnown; }
-
-    QString serverVersion() const { return m_serverVersion; }
-
-    // The newest libraryVersion seen in a match-check or sweeps reply (empty if none).
-    QString libraryVersion() const { return m_libraryVersion; }
-
-    // exchangeAnnotations() with the whole book entry the server understands:
-    // `keys` is [{k, dt}] for every live highlight (server-side deletion
-    // detection needs the complete list and keysComplete = true);
-    // `sidecarState` is "known", "new" or empty (omitted).
-    RequestId exchangeAnnotationsEx(const QString &document, const QJsonArray &changes,
-                                    const QJsonArray &keys, bool keysComplete,
-                                    const QString &sidecarState, Callback<QJsonObject> done);
+    // --- Beyond the interface ---
 
     // Tests shorten the timeouts; production keeps kConnectTimeoutMs / kRequestTimeoutMs.
     void setTimeouts(int connectMs, int requestMs);

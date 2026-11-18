@@ -620,7 +620,7 @@ RequestId QtBookOrbitClient::matchCheck(const QVector<MatchQuery> &books,
 {
     // Wire format: MatchCheckDto (koreader-plugin.dto.ts); reply: MatchCheckResult
     // {matches: [{hash, bookId, bookFileId, positionCompatible?: false}], libraryVersion}
-    // (koreader-plugin.service.ts). positionCompatible only appears as false.
+    // (koreader-plugin.service.ts). positionCompatible only appears as false (absent = true).
     QJsonArray hashes;
     QJsonArray booksJson;
     QSet<QString> seen;
@@ -867,19 +867,10 @@ RequestId QtBookOrbitClient::sendSweep(const QJsonObject &counts, Callback<QJson
 
 // --- Highlights ------------------------------------------------------------------------------------------
 
-RequestId QtBookOrbitClient::exchangeAnnotations(const QString &document,
-                                                 const QJsonArray &annotations,
+RequestId QtBookOrbitClient::exchangeAnnotations(const QString &document, const QJsonArray &changes,
+                                                 const QJsonArray &keys, bool keysComplete,
+                                                 const QString &sidecarState,
                                                  Callback<QJsonObject> done)
-{
-    // No key list: the server does no deletion detection for this call.
-    return exchangeAnnotationsEx(document, annotations, QJsonArray(), false, QString(), done);
-}
-
-RequestId QtBookOrbitClient::exchangeAnnotationsEx(const QString &document,
-                                                   const QJsonArray &changes,
-                                                   const QJsonArray &keys, bool keysComplete,
-                                                   const QString &sidecarState,
-                                                   Callback<QJsonObject> done)
 {
     // POST plugin/annotations/exchange {books: [{hash, keys: [{k, dt}], keysComplete,
     // sidecarState?, changes: [annotation]}]} (AnnotationExchangeDto). Reply:
