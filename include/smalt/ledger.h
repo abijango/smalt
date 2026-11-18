@@ -19,7 +19,19 @@
 //
 // Reading is uploaded as page events, not through the outbox: per book, every
 // page event newer than the book's watermark still has to go (see
-// pageEventsAfter() and the watermark in book_map).
+// pageEventsAfter() and the watermark in book_map). Only books with a linked
+// book_map row are pending; reading of unmatched or unlinked books stays in
+// the ledger and goes out if the book is matched later.
+//
+// Same-second rule: event times are whole seconds and the watermark is
+// exclusive, so a push while reading sends only events that start before the
+// start second of the page on screen; that page and anything starting in the
+// same second wait for the next push. appendPageEvent() refuses (and logs) an
+// event at or below its book's watermark, as a backstop.
+//
+// "Rejected for good": a page-stats request refused with ClientError (other
+// than 401/403/404/408/429). The sync engine then moves that book's
+// watermark past the rejected events and logs it; the events stay here.
 //
 // Threading: a Ledger is used from one thread at a time (Qt SQL connections
 // belong to the thread that opened them). Callers on Nickel's UI thread keep
@@ -29,6 +41,7 @@
 #include "smalt/paths.h"
 #include "smalt/status.h"
 
+#include <QByteArray>
 #include <QDateTime>
 #include <QString>
 #include <QStringList>
@@ -230,21 +243,35 @@ public:
     // Newest first, at most `limit` (Stats: book detail "Your reading").
     virtual QVector<SessionRecord> recentSessionsForBook(const QString &contentId, int limit) = 0;
     // Sessions starting in [fromUtc, toUtc), oldest first; Dropped ones excluded (Stats).
+    // recentSessionsForBook() excludes Dropped sessions too; sessionsForBook() doesn't.
     virtual QVector<SessionRecord> sessionsInRange(const QDateTime &fromUtc,
                                                    const QDateTime &toUtc) = 0;
     // Finished or open sessions with page events still above their book's
-    // watermark, oldest first (recovery after a crash; Stats merges their minutes).
+    // watermark, oldest first; Dropped sessions and unmatched or unlinked books
+    // excluded (recovery after a crash). Stats doesn't add these sessions'
+    // activeSeconds: with push while reading they are partly on the server.
+    // It sums pageEventsInRange() events that aren't confirmed, plus the open
+    // session's current page.
     virtual QVector<SessionRecord> unconfirmedSessions() = 0;
 
     // --- page_event (append-only) ---
-    // InvalidArgument for an unknown or Dropped session, a negative page or
-    // duration, or a missing start time; refuses a duplicate (book, page, start).
+    // InvalidArgument for an unknown or Dropped session, a different book from
+    // the session's, a negative page or duration, a missing start time, an
+    // event outside a Finished session's start and end, or one at or below its
+    // book's watermark (logged); refuses a duplicate (book, page, start).
     virtual Status appendPageEvent(const PageEventRecord &event) = 0;
+    // Page events starting in [fromUtc, toUtc) across all books, oldest first,
+    // Dropped sessions excluded. `confirmed` (if not null) gets one flag per
+    // event: at or below its book's watermark (Stats: timeline blocks, minutes
+    // per day split at midnight, merging unsent minutes).
+    virtual QVector<PageEventRecord> pageEventsInRange(const QDateTime &fromUtc,
+                                                       const QDateTime &toUtc,
+                                                       QVector<bool> *confirmed = nullptr) = 0;
     // A book's page events with a start time after `afterUnixSeconds`, oldest
     // first, at most `limit` (0 = no limit). What still has to be uploaded.
     virtual QVector<PageEventRecord> pageEventsAfter(const QString &contentId,
                                                      qint64 afterUnixSeconds, int limit = 0) = 0;
-    // Books with page events above their watermark, for the push.
+    // Linked books with page events above their watermark, for the push.
     virtual QStringList booksWithPendingPageEvents() = 0;
 
     // --- progress ---
@@ -274,6 +301,13 @@ public:
     virtual Status unlinkBook(const QString &contentId) = 0; // "Keep, unlinked".
     // Moves the watermark forward only (a smaller value is ignored, Ok).
     virtual Status setStatsWatermark(const QString &contentId, qint64 unixSeconds) = 0;
+
+    // --- remote_cache (disposable; safe to wipe) ---
+    // Dashboard (Stats), catalogue pages and cover thumbnails. NotFound if absent.
+    virtual Status cacheGet(const QString &key, QByteArray *value, QDateTime *updatedUtc) = 0;
+    virtual Status cachePut(const QString &key, const QString &kind, const QByteArray &value,
+                            const QDateTime &updatedUtc) = 0;
+    virtual Status cacheClear(const QString &kind) = 0; // Empty kind = everything.
 
     // --- pending_decision ---
     virtual Status addPendingDecision(const PendingDecision &decision) = 0;

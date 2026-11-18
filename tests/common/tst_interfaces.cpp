@@ -9,6 +9,7 @@
 #include "smalt/page_stats.h"
 #include "smalt/paths.h"
 #include "smalt/safety.h"
+#include "smalt/settings.h"
 #include "smalt/status.h"
 #include "smalt/sync.h"
 #include "smalt/ui_kit.h"

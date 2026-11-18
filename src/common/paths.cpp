@@ -31,6 +31,11 @@ QString Paths::configIni() const
     return adds("config.ini");
 }
 
+QString Paths::settingsIni() const
+{
+    return adds("settings.ini");
+}
+
 QString Paths::configIniExample() const
 {
     return adds("config.ini.example");

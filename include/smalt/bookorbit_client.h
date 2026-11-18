@@ -191,7 +191,9 @@ public:
     // --- Highlights (one way, Kobo to BookOrbit) ---
     // POST plugin/annotations/exchange. The server detects deletions from a
     // complete key list: send every local annotation's key in `keys` with
-    // `keysComplete` true. `sidecarState` is the plugin's state token (empty if none).
+    // `keysComplete` true. Each key is {"k": annotation key, "dt": its datetime}
+    // (koreader-exchange.dto.ts at BookOrbit c77966cc). `sidecarState` is the
+    // plugin's state token (empty if none).
     virtual RequestId exchangeAnnotations(const QString &document, const QJsonArray &changes,
                                           const QJsonArray &keys, bool keysComplete,
                                           const QString &sidecarState,

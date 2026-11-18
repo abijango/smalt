@@ -15,6 +15,7 @@ private slots:
         QCOMPARE(p.addsDir(), QStringLiteral("/mnt/onboard/.adds/bookorbit"));
         QCOMPARE(p.configIni(), QStringLiteral("/mnt/onboard/.adds/bookorbit/config.ini"));
         QCOMPARE(p.ledger(), QStringLiteral("/mnt/onboard/.adds/bookorbit/ledger.sqlite"));
+        QCOMPARE(p.settingsIni(), QStringLiteral("/mnt/onboard/.adds/bookorbit/settings.ini"));
         QCOMPARE(p.backupDir(), QStringLiteral("/mnt/onboard/.adds/bookorbit/backup"));
         QCOMPARE(p.logsDir(), QStringLiteral("/mnt/onboard/.adds/bookorbit/logs"));
         QCOMPARE(p.startupMarker(), QStringLiteral("/mnt/onboard/.adds/bookorbit/startup-session"));

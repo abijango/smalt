@@ -61,6 +61,12 @@ struct SessionUploadResult
             false; // Every book's pending events were acknowledged (or the book is unmatched).
     QMap<QString, qint64> watermarks; // New watermark per book (only books that advanced).
     QStringList unmatched; // Digests the server doesn't know.
+    // Rejected for good (ClientError other than 401/403/404/408/429): book
+    // digest -> start time of the last event in the refused request. The
+    // uploader retries a refused multi-book request one book at a time so only
+    // the bad book lands here; the others carry on. The sync engine moves
+    // these watermarks past the rejected events and logs it.
+    QMap<QString, qint64> rejected;
     int requests = 0; // page-stats requests sent.
     int eventsSent = 0; // Events in acknowledged requests.
     int eventsAccepted = 0;
