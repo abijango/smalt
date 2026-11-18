@@ -25,6 +25,7 @@ namespace {
 
 const QString kBook = QStringLiteral("file:///mnt/onboard/BookOrbit/A/B.epub");
 const QString kOther = QStringLiteral("file:///mnt/onboard/BookOrbit/C/D.epub");
+const QString kUnmatched = QStringLiteral("file:///mnt/onboard/Sideloaded/E.epub");
 
 qint64 unixSecs(const QDateTime &t)
 {
@@ -108,6 +109,9 @@ private slots:
         m_ledger = createLedger(Paths::forRoot(m_dir->path()));
         Status s = m_ledger->open();
         QVERIFY2(s.ok(), qPrintable(s.message));
+        // Only linked books are pending; both test books are linked (kUnmatched isn't).
+        QVERIFY(m_ledger->putBookMap(mapEntry(kBook, 1)).ok());
+        QVERIFY(m_ledger->putBookMap(mapEntry(kOther, 2)).ok());
     }
 
     void cleanup()
@@ -516,9 +520,7 @@ private slots:
     void watermarkMovesForwardOnlyAndDrivesConfirmed()
     {
         const QDateTime t0 = utc(2026, 11, 3, 18);
-        QCOMPARE(m_ledger->setStatsWatermark(kBook, 5).code, StatusCode::NotFound); // Not mapped.
-        QVERIFY(m_ledger->putBookMap(mapEntry(kBook, 1)).ok());
-        QVERIFY(m_ledger->putBookMap(mapEntry(kOther, 2)).ok());
+        QCOMPARE(m_ledger->setStatsWatermark(kUnmatched, 5).code, StatusCode::NotFound);
 
         const SessionRecord a = readFor(kBook, t0, 3, 60); // Events at t0, +60, +120.
         const SessionRecord b = readFor(kBook, t0.addSecs(3600), 2, 60); // +3600, +3660.
@@ -591,6 +593,134 @@ private slots:
         QCOMPARE(m_ledger->booksWithPendingPageEvents(), QStringList() << kBook);
     }
 
+    void onlyLinkedBooksArePending()
+    {
+        // Reading of a book that isn't matched stays in the ledger but isn't
+        // pending; it becomes pending once the book is matched, and stops
+        // being pending while the book is unlinked.
+        const QDateTime t0 = utc(2026, 11, 3, 18);
+        const SessionRecord s = readFor(kUnmatched, t0, 3, 60);
+        QVERIFY(!s.uuid.isEmpty());
+        QVERIFY(!s.confirmed); // Not on the server: Stats still counts its minutes.
+        QVERIFY(m_ledger->booksWithPendingPageEvents().isEmpty());
+        QVERIFY(m_ledger->unconfirmedSessions().isEmpty());
+        QCOMPARE(m_ledger->pageEventsAfter(kUnmatched, 0).size(), 3); // Kept.
+
+        auto outbox = createOutbox(m_ledger.get());
+        QVERIFY(outbox->enqueue(OutboxKind::Position, "pos-u", kUnmatched, "{}").ok());
+        QCOMPARE(outbox->pendingCount(), 1); // The position only.
+        QCOMPARE(outbox->nextBatch(t0.addDays(1)).size(), 1); // Not held.
+
+        // Matched later: its reading goes out first, the position waits.
+        QVERIFY(m_ledger->putBookMap(mapEntry(kUnmatched, 3)).ok());
+        QCOMPARE(m_ledger->booksWithPendingPageEvents(), QStringList() << kUnmatched);
+        QCOMPARE(uuidsOf(m_ledger->unconfirmedSessions()), QStringList() << s.uuid);
+        QCOMPARE(outbox->pendingCount(), 2);
+        QVERIFY(outbox->nextBatch(t0.addDays(1)).isEmpty());
+
+        // Unlinked ("Keep, unlinked"): not pending, nothing held, reading kept.
+        QVERIFY(m_ledger->unlinkBook(kUnmatched).ok());
+        QVERIFY(m_ledger->booksWithPendingPageEvents().isEmpty());
+        QVERIFY(m_ledger->unconfirmedSessions().isEmpty());
+        QCOMPARE(outbox->pendingCount(), 1);
+        QCOMPARE(outbox->nextBatch(t0.addDays(1)).size(), 1);
+        QCOMPARE(m_ledger->sessionsForBook(kUnmatched).size(), 1);
+
+        // Linked again: pending again.
+        QVERIFY(m_ledger->putBookMap(mapEntry(kUnmatched, 3)).ok());
+        QCOMPARE(m_ledger->booksWithPendingPageEvents(), QStringList() << kUnmatched);
+    }
+
+    void appendPageEventBackstops()
+    {
+        const QDateTime t0 = utc(2026, 11, 3, 18);
+        // At or below the book's watermark: refused (the server would ignore
+        // it, so it would never be counted).
+        SessionRecord s;
+        s.contentId = kBook;
+        s.startUtc = t0;
+        QVERIFY(m_ledger->beginSession(&s).ok());
+        QVERIFY(m_ledger->appendPageEvent(pageEvent(s, 1, t0, 30)).ok());
+        QVERIFY(m_ledger->setStatsWatermark(kBook, unixSecs(t0.addSecs(30))).ok());
+        QCOMPARE(m_ledger->appendPageEvent(pageEvent(s, 2, t0.addSecs(30), 30)).code,
+                 StatusCode::InvalidArgument); // At.
+        QCOMPARE(m_ledger->appendPageEvent(pageEvent(s, 2, t0.addSecs(10), 20)).code,
+                 StatusCode::InvalidArgument); // Below.
+        QVERIFY(m_ledger->appendPageEvent(pageEvent(s, 2, t0.addSecs(31), 29)).ok()); // Above.
+
+        // Outside a Finished session's [start, end]: refused.
+        s.endUtc = t0.addSecs(120);
+        s.activeSeconds = 120;
+        QVERIFY(m_ledger->finishSession(s).ok());
+        QCOMPARE(m_ledger->appendPageEvent(pageEvent(s, 3, t0.addSecs(121), 5)).code,
+                 StatusCode::InvalidArgument); // Starts after the end.
+        QCOMPARE(m_ledger->appendPageEvent(pageEvent(s, 3, t0.addSecs(100), 60)).code,
+                 StatusCode::InvalidArgument); // Runs past the end.
+        // The last page, written at close after the finish: fine.
+        QVERIFY(m_ledger->appendPageEvent(pageEvent(s, 3, t0.addSecs(60), 60)).ok());
+        QCOMPARE(m_ledger->pageEventsAfter(kBook, 0).size(), 3);
+
+        // A Finished session starting after its book's watermark: an event
+        // before the session's start is refused too.
+        SessionRecord other;
+        other.contentId = kOther;
+        other.startUtc = t0.addSecs(600);
+        QVERIFY(m_ledger->beginSession(&other).ok());
+        other.endUtc = other.startUtc.addSecs(60);
+        other.activeSeconds = 60;
+        QVERIFY(m_ledger->finishSession(other).ok());
+        QCOMPARE(m_ledger->appendPageEvent(pageEvent(other, 1, t0.addSecs(599), 1)).code,
+                 StatusCode::InvalidArgument);
+        QVERIFY(m_ledger->appendPageEvent(pageEvent(other, 1, other.startUtc, 60)).ok());
+    }
+
+    void pageEventsInRangeAcrossBooks()
+    {
+        const QDateTime day = utc(2026, 11, 5, 0);
+        // kOther before midnight, running past it; kBook after; a dropped
+        // one in between; an unmatched book's reading too.
+        const SessionRecord late = readFor(kOther, day.addSecs(-120), 3, 60, 1);
+        const SessionRecord a = readFor(kBook, day.addSecs(3600), 2, 60, 1);
+        const SessionRecord u = readFor(kUnmatched, day.addSecs(7200), 1, 60, 1);
+        SessionRecord dropped;
+        dropped.contentId = kBook;
+        dropped.startUtc = day.addSecs(5000);
+        QVERIFY(m_ledger->beginSession(&dropped).ok());
+        QVERIFY(m_ledger->appendPageEvent(pageEvent(dropped, 9, dropped.startUtc, 4)).ok());
+        dropped.endUtc = dropped.startUtc.addSecs(4);
+        dropped.activeSeconds = 4;
+        QVERIFY(m_ledger->finishSession(dropped).ok());
+        QVERIFY(!late.uuid.isEmpty() && !a.uuid.isEmpty() && !u.uuid.isEmpty());
+
+        // The kOther event at +0 s (page 3) is the one after midnight.
+        QVERIFY(m_ledger->setStatsWatermark(kBook, unixSecs(day.addSecs(3600))).ok());
+        QVector<bool> confirmed;
+        const QVector<PageEventRecord> events =
+                m_ledger->pageEventsInRange(day, day.addDays(1), &confirmed);
+        QCOMPARE(events.size(), 4);
+        QCOMPARE(confirmed.size(), 4);
+        QCOMPARE(events[0].contentId, kOther);
+        QCOMPARE(events[0].startUtc, day);
+        QVERIFY(!confirmed[0]);
+        QCOMPARE(events[1].contentId, kBook);
+        QCOMPARE(events[1].startUtc, day.addSecs(3600));
+        QVERIFY(confirmed[1]); // At the watermark.
+        QCOMPARE(events[2].startUtc, day.addSecs(3660));
+        QVERIFY(!confirmed[2]);
+        QCOMPARE(events[3].contentId, kUnmatched);
+        QVERIFY(!confirmed[3]); // Never sent.
+
+        // Half-open range, no flags wanted, bad ranges.
+        QCOMPARE(m_ledger->pageEventsInRange(day.addSecs(-120), day).size(), 2);
+        QCOMPARE(m_ledger->pageEventsInRange(day.addSecs(-119), day).size(), 1);
+        QVERIFY(m_ledger->pageEventsInRange(day, day).isEmpty());
+        QVERIFY(m_ledger->pageEventsInRange(QDateTime(), day).isEmpty());
+        QVector<bool> none;
+        none << true;
+        QVERIFY(m_ledger->pageEventsInRange(day.addDays(1), day, &none).isEmpty());
+        QVERIFY(none.isEmpty());
+    }
+
     // --- Stats queries ---
 
     void sessionsInRangeAndRecentOrderingAndLimits()
@@ -625,6 +755,7 @@ private slots:
         QVERIFY(m_ledger->sessionsInRange(day.addDays(1), day).isEmpty());
         QVERIFY(m_ledger->sessionsInRange(QDateTime(), day).isEmpty());
 
+        // recentSessionsForBook() leaves out Dropped sessions, like sessionsInRange().
         QCOMPARE(uuidsOf(m_ledger->recentSessionsForBook(kBook, 10)),
                  QStringList() << atEnd.uuid << s3.uuid << s1.uuid << before.uuid);
         QCOMPARE(uuidsOf(m_ledger->recentSessionsForBook(kBook, 2)),
@@ -736,6 +867,9 @@ private slots:
         QVERIFY(ledger->session(open.uuid, &done).ok());
         QCOMPARE(done.state, SessionState::Finished);
         QCOMPARE(done.activeSeconds, qint64((kCommitted + kInFlight) * 30));
+        QVERIFY(!done.confirmed);
+        QVERIFY(ledger->unconfirmedSessions().isEmpty()); // Book not linked in this ledger.
+        QVERIFY(ledger->putBookMap(mapEntry(kBook, 1)).ok());
         QCOMPARE(ledger->unconfirmedSessions().size(), 1);
     }
 };

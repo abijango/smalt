@@ -446,6 +446,60 @@ private slots:
         QCOMPARE(m_ledger->putBookMap(bad).code, StatusCode::InvalidArgument);
     }
 
+    // --- remote_cache ---
+
+    void remoteCacheGetPutClear()
+    {
+        QByteArray value;
+        QDateTime updated;
+        QCOMPARE(m_ledger->cacheGet(QStringLiteral("dashboard"), &value, &updated).code,
+                 StatusCode::NotFound);
+
+        QVERIFY(m_ledger->cachePut(QStringLiteral("dashboard"), QStringLiteral("dashboard"),
+                                   QByteArray("{\"readingYear\":[]}"), utc(2026, 11, 1, 9))
+                        .ok());
+        const QByteArray png("\x89PNG\r\n\x1a\n\0\x01", 10); // Binary, with a NUL.
+        QVERIFY(m_ledger->cachePut(QStringLiteral("cover:42"), QStringLiteral("cover"), png,
+                                   utc(2026, 11, 1, 9, 5))
+                        .ok());
+        QVERIFY(m_ledger->cachePut(QStringLiteral("cover:43"), QStringLiteral("cover"), "x",
+                                   utc(2026, 11, 1, 9, 6))
+                        .ok());
+
+        QVERIFY(m_ledger->cacheGet(QStringLiteral("cover:42"), &value, &updated).ok());
+        QCOMPARE(value, png);
+        QCOMPARE(updated, utc(2026, 11, 1, 9, 5));
+        QVERIFY(m_ledger->cacheGet(QStringLiteral("cover:42"), nullptr, nullptr).ok());
+
+        // Put replaces.
+        QVERIFY(m_ledger->cachePut(QStringLiteral("dashboard"), QStringLiteral("dashboard"),
+                                   QByteArray("{}"), utc(2026, 11, 2))
+                        .ok());
+        QVERIFY(m_ledger->cacheGet(QStringLiteral("dashboard"), &value, &updated).ok());
+        QCOMPARE(value, QByteArray("{}"));
+        QCOMPARE(updated, utc(2026, 11, 2));
+
+        // Clear one kind, then everything.
+        QVERIFY(m_ledger->cacheClear(QStringLiteral("cover")).ok());
+        QCOMPARE(m_ledger->cacheGet(QStringLiteral("cover:42"), &value, &updated).code,
+                 StatusCode::NotFound);
+        QVERIFY(m_ledger->cacheGet(QStringLiteral("dashboard"), &value, &updated).ok());
+        QVERIFY(m_ledger->cacheClear(QStringLiteral("nothing-of-this-kind")).ok());
+        QVERIFY(m_ledger->cacheClear(QString()).ok());
+        QCOMPARE(m_ledger->cacheGet(QStringLiteral("dashboard"), &value, &updated).code,
+                 StatusCode::NotFound);
+
+        QCOMPARE(m_ledger->cachePut(QString(), QStringLiteral("cover"), "x", utc(2026, 11, 2)).code,
+                 StatusCode::InvalidArgument);
+        QCOMPARE(m_ledger->cachePut(QStringLiteral("k"), QString(), "x", utc(2026, 11, 2)).code,
+                 StatusCode::InvalidArgument);
+
+        m_ledger->close();
+        QCOMPARE(m_ledger->cacheGet(QStringLiteral("dashboard"), &value, &updated).code,
+                 StatusCode::Busy);
+        QCOMPARE(m_ledger->cacheClear(QString()).code, StatusCode::Busy);
+    }
+
     // --- pending_decision ---
 
     void pendingDecisions()

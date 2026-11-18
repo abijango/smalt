@@ -71,9 +71,16 @@ QDateTime fromUnix(qint64 seconds);
 
 // FROM ... WHERE clause (aliases pe for page_event, s for session) selecting
 // page events above their book's watermark: what still has to be uploaded.
-// Events of Dropped sessions never count. A book without a book_map row has
-// watermark 0. Shared by the ledger and the outbox's Position hold.
+// Events of Dropped sessions never count, and only books with a linked
+// book_map row are pending: reading of unmatched or unlinked books stays in
+// the ledger and becomes pending once the book is linked. Shared by the
+// ledger and the outbox's Position hold.
 extern const char kPendingPageEventsFromWhere[];
+
+// WHERE condition on table `session` (unaliased): a Finished or Open session
+// with page events still pending under the same rules. Ledger::
+// unconfirmedSessions() and Outbox::pendingCount() use it.
+extern const char kSessionHasPendingEvents[];
 
 } // namespace ledgerdb
 } // namespace smalt

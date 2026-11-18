@@ -304,8 +304,13 @@ QDateTime fromUnix(qint64 seconds)
 
 const char kPendingPageEventsFromWhere[] =
         " page_event pe JOIN session s ON s.uuid = pe.session_uuid"
-        " WHERE s.state <> 2 AND pe.start_unix > COALESCE((SELECT bm.stats_watermark"
-        " FROM book_map bm WHERE bm.content_id = pe.content_id), 0) ";
+        " JOIN book_map bm ON bm.content_id = pe.content_id AND bm.unlinked_utc IS NULL"
+        " WHERE s.state <> 2 AND pe.start_unix > bm.stats_watermark ";
+
+const char kSessionHasPendingEvents[] =
+        " (session.state <> 2 AND EXISTS (SELECT 1 FROM page_event pe JOIN book_map bm"
+        " ON bm.content_id = pe.content_id AND bm.unlinked_utc IS NULL"
+        " WHERE pe.session_uuid = session.uuid AND pe.start_unix > bm.stats_watermark)) ";
 
 int schemaVersion(QSqlDatabase db)
 {

@@ -8,7 +8,8 @@
 //
 // A book's Position items are held back while the book has page events above
 // its watermark (ledgerdb::kPendingPageEventsFromWhere), so a position never
-// reaches BookOrbit before the reading behind it.
+// reaches BookOrbit before the reading behind it. Only linked books are held:
+// an unmatched or unlinked book's reading can't go, so it holds nothing.
 //
 // One row per kind + entity UUID. Re-enqueueing replaces the payload and
 // bumps payload_rev; nextBatch() records the revision it handed out in
@@ -338,16 +339,14 @@ int SqlOutbox::pendingCount()
     QSqlDatabase d = db();
     if (!d.isValid())
         return 0;
-    // Outbox items of the live kinds, plus sessions with page events still
-    // above their book's watermark (Ledger::unconfirmedSessions()).
+    // Outbox items of the live kinds, plus sessions of linked books with page
+    // events still above the watermark (Ledger::unconfirmedSessions()).
     QSqlQuery q(d);
     if (!q.exec(QStringLiteral("SELECT (SELECT count(*) FROM outbox WHERE kind BETWEEN %1 AND %2)"
-                               " + (SELECT count(*) FROM session WHERE state <> 2 AND EXISTS"
-                               " (SELECT 1 FROM page_event pe WHERE pe.session_uuid = session.uuid"
-                               " AND pe.start_unix > COALESCE((SELECT bm.stats_watermark FROM"
-                               " book_map bm WHERE bm.content_id = session.content_id), 0)))")
+                               " + (SELECT count(*) FROM session WHERE")
                         .arg(int(OutboxKind::Position))
-                        .arg(int(OutboxKind::Status)))
+                        .arg(int(OutboxKind::Status))
+                + QLatin1String(ledgerdb::kSessionHasPendingEvents) + QStringLiteral(")"))
         || !q.next()) {
         sqlFailure(q.lastError(), "count");
         return 0;

@@ -302,6 +302,8 @@ public:
     QVector<SessionRecord> unconfirmedSessions() override;
 
     Status appendPageEvent(const PageEventRecord &event) override;
+    QVector<PageEventRecord> pageEventsInRange(const QDateTime &fromUtc, const QDateTime &toUtc,
+                                               QVector<bool> *confirmed) override;
     QVector<PageEventRecord> pageEventsAfter(const QString &contentId, qint64 afterUnixSeconds,
                                              int limit) override;
     QStringList booksWithPendingPageEvents() override;
@@ -327,6 +329,11 @@ public:
     Status bookMapByBookId(qint64 bookId, BookMapEntry *out) override;
     Status unlinkBook(const QString &contentId) override;
     Status setStatsWatermark(const QString &contentId, qint64 unixSeconds) override;
+
+    Status cacheGet(const QString &key, QByteArray *value, QDateTime *updatedUtc) override;
+    Status cachePut(const QString &key, const QString &kind, const QByteArray &value,
+                    const QDateTime &updatedUtc) override;
+    Status cacheClear(const QString &kind) override;
 
     Status addPendingDecision(const PendingDecision &decision) override;
     QVector<PendingDecision> pendingDecisions() override;
@@ -654,8 +661,13 @@ Status SqlLedger::setSweepOwed(bool owed)
 
 namespace {
 
-// "Some page event of this session is above its book's watermark."
-const char kHasPendingEvents[] =
+// "Some page event of this session is above its book's watermark", for the
+// `confirmed` flag: the watermark of any book_map row, linked or not, and 0
+// without one. So a session of an unmatched book reads as not confirmed (the
+// server doesn't have it), though it isn't pending (unconfirmedSessions() and
+// the pending counts take only linked books, ledgerdb::kSessionHasPendingEvents).
+// A session with no page events reads as confirmed: nothing is left to send.
+const char kHasEventsAboveWatermark[] =
         " EXISTS (SELECT 1 FROM page_event pe WHERE pe.session_uuid = session.uuid"
         " AND pe.start_unix > COALESCE((SELECT bm.stats_watermark FROM book_map bm"
         " WHERE bm.content_id = session.content_id), 0)) ";
@@ -673,7 +685,8 @@ QVector<SessionRecord> SqlLedger::querySessions(const QString &whereAndOrder,
                              " start_locator, start_percent, end_locator, end_percent,"
                              " start_page, end_page, total_pages, pages_turned, estimated,"
                              " approximate, NOT")
-              + QLatin1String(kHasPendingEvents) + QStringLiteral("FROM session ") + whereAndOrder);
+              + QLatin1String(kHasEventsAboveWatermark) + QStringLiteral("FROM session ")
+              + whereAndOrder);
     for (const QVariant &v : binds)
         q.addBindValue(v);
     if (!q.exec()) {
@@ -966,7 +979,8 @@ QVector<SessionRecord> SqlLedger::sessionsInRange(const QDateTime &fromUtc, cons
 
 QVector<SessionRecord> SqlLedger::unconfirmedSessions()
 {
-    return querySessions(QStringLiteral("WHERE state <> 2 AND") + QLatin1String(kHasPendingEvents)
+    // Linked books only; Dropped sessions never.
+    return querySessions(QStringLiteral("WHERE") + QLatin1String(ledgerdb::kSessionHasPendingEvents)
                                  + QStringLiteral("ORDER BY start_utc, rowid"),
                          QVariantList());
 }
@@ -985,7 +999,10 @@ Status SqlLedger::appendPageEvent(const PageEventRecord &e)
     const qint64 start = ledgerdb::toUnix(e.startUtc);
 
     QSqlQuery q(db());
-    q.prepare(QStringLiteral("SELECT content_id, state FROM session WHERE uuid = ?"));
+    q.prepare(QStringLiteral("SELECT content_id, state, start_utc, end_utc,"
+                             " COALESCE((SELECT bm.stats_watermark FROM book_map bm"
+                             " WHERE bm.content_id = session.content_id), 0)"
+                             " FROM session WHERE uuid = ?"));
     q.addBindValue(e.sessionUuid);
     if (!q.exec())
         return sqlFailure(q.lastError(), "read session");
@@ -994,8 +1011,12 @@ Status SqlLedger::appendPageEvent(const PageEventRecord &e)
     if (q.value(0).toString() != e.contentId)
         return invalid(
                 QStringLiteral("page event for another book than session %1").arg(e.sessionUuid));
-    if (q.value(1).toInt() == stateToDb(SessionState::Dropped))
+    const int state = q.value(1).toInt();
+    if (state == stateToDb(SessionState::Dropped))
         return invalid(QStringLiteral("session %1 was dropped").arg(e.sessionUuid));
+    const QDateTime sessionStart = ledgerdb::fromDb(q.value(2));
+    const QDateTime sessionEnd = ledgerdb::fromDb(q.value(3));
+    const qint64 watermark = q.value(4).toLongLong();
 
     // BookOrbit keys page events on page + start second; so does the ledger.
     q.prepare(QStringLiteral("SELECT 1 FROM page_event WHERE content_id = ? AND page = ?"
@@ -1008,6 +1029,38 @@ Status SqlLedger::appendPageEvent(const PageEventRecord &e)
     if (q.next())
         return invalid(
                 QStringLiteral("page event %1 at %2 already recorded").arg(e.page).arg(start));
+
+    // Backstops (ledger.h, "Same-second rule"). An event at or below the
+    // watermark would be ignored by BookOrbit and never counted there; an
+    // event outside a Finished session's span can't belong to it. Both point
+    // at a recorder bug, so they are logged.
+    if (start <= watermark) {
+        const QString message = QStringLiteral("page event %1 at %2 of %3 is at or below the"
+                                               " book's watermark %4; refused")
+                                        .arg(e.page)
+                                        .arg(start)
+                                        .arg(e.contentId)
+                                        .arg(watermark);
+        log::warn(kLog, message);
+        return invalid(message);
+    }
+    if (state == stateToDb(SessionState::Finished)) {
+        // Whole seconds, as the event is stored: [start second, end rounded up].
+        const qint64 spanStart = ledgerdb::toUnix(sessionStart);
+        const qint64 spanEnd = ledgerdb::toUnix(sessionEnd.addMSecs(999));
+        if (start < spanStart || start + e.durationSeconds > spanEnd) {
+            const QString message = QStringLiteral("page event %1 at %2 (%3 s) is outside finished"
+                                                   " session %4 (%5 to %6); refused")
+                                            .arg(e.page)
+                                            .arg(start)
+                                            .arg(e.durationSeconds)
+                                            .arg(e.sessionUuid)
+                                            .arg(spanStart)
+                                            .arg(spanEnd);
+            log::warn(kLog, message);
+            return invalid(message);
+        }
+    }
 
     // One statement: a crash leaves the event recorded or not, never half.
     q.prepare(QStringLiteral("INSERT INTO page_event (session_uuid, content_id, page, total_pages,"
@@ -1023,6 +1076,47 @@ Status SqlLedger::appendPageEvent(const PageEventRecord &e)
     if (!q.exec())
         return sqlFailure(q.lastError(), "append page event");
     return Status::success();
+}
+
+QVector<PageEventRecord> SqlLedger::pageEventsInRange(const QDateTime &fromUtc,
+                                                      const QDateTime &toUtc,
+                                                      QVector<bool> *confirmed)
+{
+    QVector<PageEventRecord> out;
+    if (confirmed)
+        confirmed->clear();
+    if (!m_open || !fromUtc.isValid() || !toUtc.isValid() || !(fromUtc < toUtc))
+        return out;
+    // Compared in milliseconds, so a range that doesn't start on a whole
+    // second still means [fromUtc, toUtc). Confirmed: at or below the
+    // watermark of the book's row, linked or not (0 without one).
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral(
+            "SELECT pe.session_uuid, pe.content_id, pe.page, pe.total_pages, pe.start_unix,"
+            " pe.duration_seconds, pe.start_unix <= COALESCE((SELECT bm.stats_watermark"
+            " FROM book_map bm WHERE bm.content_id = pe.content_id), 0)"
+            " FROM page_event pe JOIN session s ON s.uuid = pe.session_uuid"
+            " WHERE s.state <> 2 AND pe.start_unix * 1000 >= ? AND pe.start_unix * 1000 < ?"
+            " ORDER BY pe.start_unix, pe.content_id, pe.page, pe.id"));
+    q.addBindValue(ledgerdb::toDb(fromUtc));
+    q.addBindValue(ledgerdb::toDb(toUtc));
+    if (!q.exec()) {
+        sqlFailure(q.lastError(), "read page events in range");
+        return out;
+    }
+    while (q.next()) {
+        PageEventRecord e;
+        e.sessionUuid = q.value(0).toString();
+        e.contentId = q.value(1).toString();
+        e.page = q.value(2).toInt();
+        e.totalPages = q.value(3).toInt();
+        e.startUtc = ledgerdb::fromUnix(q.value(4).toLongLong());
+        e.durationSeconds = q.value(5).toInt();
+        out << e;
+        if (confirmed)
+            *confirmed << (q.value(6).toInt() != 0);
+    }
+    return out;
 }
 
 QVector<PageEventRecord> SqlLedger::pageEventsAfter(const QString &contentId,
@@ -1573,6 +1667,67 @@ Status SqlLedger::setStatsWatermark(const QString &contentId, qint64 unixSeconds
         return sqlFailure(q.lastError(), "read book map");
     if (!q.next())
         return Status::error(StatusCode::NotFound, QStringLiteral("book not mapped"));
+    return Status::success();
+}
+
+// ---------------------------------------------------------------------------
+// remote_cache (disposable; the v1 table's cache_key, kind, value, updated_utc)
+// ---------------------------------------------------------------------------
+
+Status SqlLedger::cacheGet(const QString &key, QByteArray *value, QDateTime *updatedUtc)
+{
+    if (value)
+        value->clear();
+    if (updatedUtc)
+        *updatedUtc = QDateTime();
+    if (!m_open)
+        return closedStatus();
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("SELECT value, updated_utc FROM remote_cache WHERE cache_key = ?"));
+    q.addBindValue(key);
+    if (!q.exec())
+        return sqlFailure(q.lastError(), "read cache");
+    if (!q.next())
+        return Status::error(StatusCode::NotFound, QStringLiteral("not cached: %1").arg(key));
+    if (value)
+        *value = q.value(0).toByteArray();
+    if (updatedUtc)
+        *updatedUtc = ledgerdb::fromDb(q.value(1));
+    return Status::success();
+}
+
+Status SqlLedger::cachePut(const QString &key, const QString &kind, const QByteArray &value,
+                           const QDateTime &updatedUtc)
+{
+    if (!m_open)
+        return closedStatus();
+    if (key.isEmpty() || kind.isEmpty())
+        return invalid(QStringLiteral("cachePut: no key or kind"));
+    QSqlQuery q(db());
+    q.prepare(QStringLiteral("INSERT OR REPLACE INTO remote_cache (cache_key, kind, value,"
+                             " updated_utc) VALUES (?, ?, ?, ?)"));
+    q.addBindValue(key);
+    q.addBindValue(kind);
+    q.addBindValue(value);
+    q.addBindValue(ledgerdb::toDb(updatedUtc.isValid() ? updatedUtc : nowUtc()));
+    if (!q.exec())
+        return sqlFailure(q.lastError(), "write cache");
+    return Status::success();
+}
+
+Status SqlLedger::cacheClear(const QString &kind)
+{
+    if (!m_open)
+        return closedStatus();
+    QSqlQuery q(db());
+    if (kind.isEmpty()) {
+        q.prepare(QStringLiteral("DELETE FROM remote_cache"));
+    } else {
+        q.prepare(QStringLiteral("DELETE FROM remote_cache WHERE kind = ?"));
+        q.addBindValue(kind);
+    }
+    if (!q.exec())
+        return sqlFailure(q.lastError(), "clear cache");
     return Status::success();
 }
 
