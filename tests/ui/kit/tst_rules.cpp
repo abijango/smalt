@@ -10,6 +10,15 @@ using namespace kittest;
 
 namespace {
 
+int textWidth(const QFont &font, const QString &text)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+    return QFontMetrics(font).horizontalAdvance(text);
+#else
+    return QFontMetrics(font).width(text); // The Kobo's Qt 5.2 has no horizontalAdvance().
+#endif
+}
+
 QImage grab(QWidget *w)
 {
     return kit::gallery::renderToImage(w);
@@ -386,13 +395,20 @@ private slots:
                     &parent));
             tabs->resize(f.profile().widthPx, tabs->height());
             QVERIFY(tabs->heightMm() >= kMinTouchTargetMm);
-            const QFontMetrics fm(f.theme().font(kit::FontRole::Body));
+            const QFont font = f.theme().font(kit::FontRole::Body);
             int covered = 0;
             for (int i = 0; i < 5; ++i) {
                 const QRect r = tabs->tabRect(i);
                 covered += r.width();
                 QVERIFY(r.width() >= mmToPx(kMinTouchTargetMm, f.profile()));
-                QVERIFY(fm.width(i == 1 ? "Library" : "Series") < r.width());
+                // Five equal tabs: about 18 mm on the Claras, 21 mm on the Libra.
+                QVERIFY(qAbs(r.width() - f.profile().widthPx / 5) <= 1);
+                const double mm = r.width() * kMmPerInch / f.profile().ppi;
+                if (f.profile().widthPx == 1072)
+                    QVERIFY2(qAbs(mm - 18.1) < 0.2, "Clara tabs are about 18 mm");
+                else
+                    QVERIFY2(qAbs(mm - 21.3) < 0.2, "Libra tabs are about 21 mm");
+                QVERIFY(textWidth(font, i == 1 ? "Library" : "Series") < r.width());
             }
             QCOMPARE(covered, f.profile().widthPx);
         }
