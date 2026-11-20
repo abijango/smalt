@@ -12,3 +12,6 @@ add_subdirectory(sync)        # 21
 add_subdirectory(ui/screens)  # 22
 add_subdirectory(nickel)      # 20, 30: desktop-testable parts, against FakeNickel
 add_subdirectory(features)    # 31-34: one subfolder each, picked up automatically
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/stats/CMakeLists.txt")
+    add_subdirectory(stats)   # 23
+endif()
