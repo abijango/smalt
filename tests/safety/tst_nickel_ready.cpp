@@ -6,6 +6,7 @@
 
 #include "smalt/safety.h"
 
+#include <QElapsedTimer>
 #include <QtTest>
 
 #include <memory>
@@ -126,6 +127,109 @@ private slots:
         waiter.start([&ready]() { ++ready; }, [&gaveUp]() { ++gaveUp; });
         QCOMPARE(ready, 0);
         QCOMPARE(gaveUp, 1);
+    }
+
+    void giveUpShorterThanPollEndsOnTime()
+    {
+        NickelReadyWaiter waiter(m_nickel.get(), m_clock, smalt::safety::kNickelReadyPollMs, 300);
+        int gaveUp = 0;
+        waiter.start([]() {}, [&gaveUp]() { ++gaveUp; });
+        m_clock->advance(299);
+        QCOMPARE(gaveUp, 0);
+        m_clock->advance(1);
+        QCOMPARE(gaveUp, 1);
+        QCOMPARE(m_clock->pendingTimers(), 0);
+    }
+
+    // --- The public API (include/smalt/safety.h), on the real Qt clock ---
+
+    void publicAlreadyReady()
+    {
+        m_nickel->setReady(true);
+        std::unique_ptr<smalt::NickelReadyWait> wait =
+                smalt::createNickelReadyWait(m_nickel.get(), 5000);
+        int ready = 0;
+        int gaveUp = 0;
+        wait->start([&ready]() { ++ready; }, [&gaveUp]() { ++gaveUp; });
+        QCOMPARE(ready, 1);
+        QVERIFY(wait->ready());
+        QCOMPARE(gaveUp, 0);
+    }
+
+    void publicReadyOnSignal()
+    {
+        std::unique_ptr<smalt::NickelReadyWait> wait =
+                smalt::createNickelReadyWait(m_nickel.get(), 5000);
+        int ready = 0;
+        int gaveUp = 0;
+        wait->start([&ready]() { ++ready; }, [&gaveUp]() { ++gaveUp; });
+        QVERIFY(!wait->ready());
+        m_nickel->simulateNickelReady();
+        QCOMPARE(ready, 1);
+        QVERIFY(wait->ready());
+        m_nickel->simulateNickelReady();
+        QTest::qWait(50);
+        QCOMPARE(ready, 1);
+        QCOMPARE(gaveUp, 0);
+    }
+
+    void publicReadyOnMissedSignalFallback()
+    {
+        std::unique_ptr<smalt::NickelReadyWait> wait =
+                smalt::createNickelReadyWait(m_nickel.get(), 5000);
+        int ready = 0;
+        int gaveUp = 0;
+        wait->start([&ready]() { ++ready; }, [&gaveUp]() { ++gaveUp; });
+        m_nickel->setReady(true); // No signal: only the 1 s direct check sees it.
+        QCOMPARE(ready, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(ready, 1, 3 * smalt::safety::kNickelReadyPollMs);
+        QVERIFY(wait->ready());
+        QCOMPARE(gaveUp, 0);
+    }
+
+    void publicGivesUpAfterGiveUpMs()
+    {
+        const int giveUpMs = 200;
+        std::unique_ptr<smalt::NickelReadyWait> wait =
+                smalt::createNickelReadyWait(m_nickel.get(), giveUpMs);
+        int ready = 0;
+        int gaveUp = 0;
+        QElapsedTimer elapsed;
+        qint64 gaveUpAfterMs = -1;
+        elapsed.start();
+        wait->start([&ready]() { ++ready; },
+                    [&gaveUp, &gaveUpAfterMs, &elapsed]() {
+                        ++gaveUp;
+                        gaveUpAfterMs = elapsed.elapsed();
+                    });
+        QTRY_COMPARE_WITH_TIMEOUT(gaveUp, 1, 5000);
+        // The real clock's timers are precise, so never early.
+        QVERIFY2(gaveUpAfterMs >= giveUpMs, qPrintable(QString::number(gaveUpAfterMs)));
+        QVERIFY2(gaveUpAfterMs < smalt::safety::kNickelReadyPollMs,
+                 qPrintable(QString::number(gaveUpAfterMs)));
+        QVERIFY(!wait->ready());
+        // Late readiness is ignored, and nothing runs twice.
+        m_nickel->simulateNickelReady();
+        QTest::qWait(50);
+        QCOMPARE(ready, 0);
+        QCOMPARE(gaveUp, 1);
+        QVERIFY(!wait->ready());
+    }
+
+    void publicDestroyedWaitIsQuiet()
+    {
+        int ready = 0;
+        int gaveUp = 0;
+        {
+            std::unique_ptr<smalt::NickelReadyWait> wait =
+                    smalt::createNickelReadyWait(m_nickel.get(), 100);
+            wait->start([&ready]() { ++ready; }, [&gaveUp]() { ++gaveUp; });
+        }
+        m_nickel->setReady(true);
+        m_nickel->simulateNickelReady();
+        QTest::qWait(300);
+        QCOMPARE(ready, 0);
+        QCOMPARE(gaveUp, 0);
     }
 };
 

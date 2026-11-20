@@ -667,7 +667,7 @@ private slots:
         QVERIFY(writeFile(m_paths->startupMarker(), QByteArray("strikes=1\n")));
         QVERIFY(writeFile(m_paths->disabledSwitch(), QByteArray("library=x\n")));
 
-        QVERIFY(smalt::safety::cleanupAfterUninstall(*m_paths).ok());
+        QVERIFY(smalt::cleanupAfterUninstall(*m_paths).ok());
 
         for (const QString &path : kept) {
             QVERIFY2(exists(path), qPrintable(path));
@@ -677,9 +677,9 @@ private slots:
         QVERIFY(!exists(m_paths->disabledSwitch()));
 
         // Nothing left to clean is fine too.
-        QVERIFY(smalt::safety::cleanupAfterUninstall(*m_paths).ok());
+        QVERIFY(smalt::cleanupAfterUninstall(*m_paths).ok());
         QVERIFY(QDir(m_paths->addsDir()).removeRecursively());
-        QVERIFY(smalt::safety::cleanupAfterUninstall(*m_paths).ok());
+        QVERIFY(smalt::cleanupAfterUninstall(*m_paths).ok());
     }
 
     void reinstallAfterUninstallStartsClean()
@@ -687,7 +687,7 @@ private slots:
         crashedBoot();
         crashedBoot();
         QVERIFY(cleanBoot().recoveryTriggered);
-        QVERIFY(smalt::safety::cleanupAfterUninstall(*m_paths).ok());
+        QVERIFY(smalt::cleanupAfterUninstall(*m_paths).ok());
         const StartupDecision d = cleanBoot();
         QVERIFY(d.modActive);
         QVERIFY(!d.previousStartupCrashed);

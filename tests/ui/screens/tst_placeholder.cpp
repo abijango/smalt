@@ -17,8 +17,10 @@ private slots:
         QCOMPARE(clara.readingNowCovers, 3);
         QCOMPARE(libra.readingNowCovers, 4);
         QCOMPARE(clara.upNextRows, 1);
+        QCOMPARE(clara.heatmapWeeks, 26);
+        QCOMPARE(libra.heatmapWeeks, 52);
         QCOMPARE(libra.upNextRows, 2);
-        QCOMPARE(clara.tabs, 4);
+        QCOMPARE(clara.tabs, 5);
         QCOMPARE(libra.tabs, 5);
     }
 };

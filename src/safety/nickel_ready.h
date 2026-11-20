@@ -5,7 +5,8 @@
 //
 // The Nickel side is NickelBridge (include/smalt/nickel.h): its nickelReady()
 // signal and isReady(), which checks Nickel's state directly. Task 30 provides
-// the real bridge and calls this from the plugin.
+// the real bridge and calls createNickelReadyWait() (include/smalt/safety.h)
+// from the plugin; that wraps NickelReadyWaiter on the real clock.
 #pragma once
 
 #include "clock.h"
@@ -68,6 +69,12 @@ private:
     std::function<void()> m_onReady;
     std::function<void()> m_onGiveUp;
 };
+
+// The public NickelReadyWait over a NickelReadyWaiter, with the clock
+// injectable for tests (null: the real Qt clock).
+std::unique_ptr<NickelReadyWait> createNickelReadyWaitWith(NickelBridge *nickel,
+                                                           std::shared_ptr<Clock> clock,
+                                                           int giveUpMs = kReadinessTimeoutMs);
 
 } // namespace safety
 } // namespace smalt

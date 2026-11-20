@@ -426,24 +426,6 @@ QString recoveryNoticeText(const QDateTime &when)
     return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
 }
 
-Status cleanupAfterUninstall(const Paths &paths)
-{
-    Status result;
-    const QString removable[] = { paths.startupMarker(), paths.disabledSwitch() };
-    for (const QString &path : removable) {
-        const Status status = removeIfPresent(path);
-        if (!status.ok()) {
-            log::error(kModule, QStringLiteral("uninstall: %1").arg(status.message));
-            result = status;
-        }
-    }
-    log::info(kModule,
-              QStringLiteral("uninstall cleanup done; kept the ledger, backups, logs "
-                             "and settings in %1")
-                      .arg(paths.addsDir()));
-    return result;
-}
-
 std::unique_ptr<Safety> createSafetyWith(const Paths &paths, std::shared_ptr<Clock> clock,
                                          LibraryIdentity libraryIdentity)
 {
@@ -454,6 +436,27 @@ std::unique_ptr<Safety> createSafetyWith(const Paths &paths, std::shared_ptr<Clo
 }
 
 } // namespace safety
+
+// Cleanup for the plugin's NickelHook `uninstall` callback, which runs after
+// NickelHook has already removed libsmalt.so. Removes only Smalt's transient
+// state, so a later reinstall starts clean. Missing files are fine.
+Status cleanupAfterUninstall(const Paths &paths)
+{
+    Status result;
+    const QString removable[] = { paths.startupMarker(), paths.disabledSwitch() };
+    for (const QString &path : removable) {
+        const Status status = safety::removeIfPresent(path);
+        if (!status.ok()) {
+            log::error(safety::kModule, QStringLiteral("uninstall: %1").arg(status.message));
+            result = status;
+        }
+    }
+    log::info(safety::kModule,
+              QStringLiteral("uninstall cleanup done; kept the ledger, backups, logs "
+                             "and settings in %1")
+                      .arg(paths.addsDir()));
+    return result;
+}
 
 std::unique_ptr<Safety> createSafety(const Paths &paths)
 {

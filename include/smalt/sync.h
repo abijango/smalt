@@ -21,9 +21,23 @@ constexpr int kRecentSuccessSkipSeconds = 5 * 60; // "in the last 5 minutes, wit
 constexpr int kManualSyncTimeoutMs = 60000; // "Sync now": 60 s
 constexpr int kToastAfterConsecutiveFailures = 3; // "failed three syncs in a row"
 
+// Push while reading (SPEC, Triggers and Settings screen).
+enum class LivePushMode {
+    Off,
+    OnlyWhenConnected, // Default: push only if Wi-Fi is already connected.
+    ConnectBriefly, // Turn Wi-Fi on for the push and put it back the way it was.
+};
+constexpr LivePushMode kDefaultLivePushMode = LivePushMode::OnlyWhenConnected;
+constexpr int kDefaultLivePushMinutes = 5; // Default for OnlyWhenConnected.
+constexpr int kDefaultConnectBrieflyMinutes = 15; // Default for ConnectBriefly.
+constexpr int kLivePushChoicesMinutes[4] = { 5, 10, 15, 30 };
+
 enum class SyncTrigger {
+    // Push the open book's page events since its watermark that start before
+    // the page on screen's start second (see ledger.h, same-second rule).
+    WhileReading,
     BookClosed, // Push that book's session, position, highlights, status.
-    BeforeSleep, // End the open session, push the outbox, quick position pull.
+    BeforeSleep, // Write the open session so far, push, quick position pull.
     Wake, // Pull, then push; background.
     WifiAlreadyOn, // Full sync.
     Manual, // "Sync now": full sync with progress.
@@ -32,7 +46,7 @@ enum class SyncTrigger {
 struct SyncRequest
 {
     SyncTrigger trigger = SyncTrigger::Manual;
-    QString contentId; // BookClosed: the book that closed.
+    QString contentId; // BookClosed: the book that closed; WhileReading: the open book.
 };
 
 enum class SyncOutcome {
@@ -63,7 +77,7 @@ struct SyncStatus
     bool running = false;
     bool online = false;
     QDateTime lastSuccessUtc; // Null if never.
-    int waiting = 0; // Outbox items.
+    int waiting = 0; // Outbox::pendingCount(): outbox items plus unconfirmed sessions.
     int consecutiveFailures = 0;
     ErrorKind lastError = ErrorKind::None;
 };

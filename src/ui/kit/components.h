@@ -22,31 +22,6 @@ namespace smalt {
 namespace ui {
 namespace kit {
 
-struct CoverSpec
-{
-    QPixmap pixmap; // May be null: a placeholder is drawn.
-    QString title;
-    QString format; // "CBZ", "PDF" for comics and PDFs; empty for books.
-    double progress = -1; // 0..1, or negative for no bar.
-};
-
-enum class BadgeState {
-    Download, // Not on the Kobo: teal tint with a download arrow.
-    OnDevice, // Downloaded: plain check, no colour.
-    Percent, // Downloading: live value as black text ("42%").
-    None,
-};
-
-struct ListRowSpec
-{
-    CoverSpec cover;
-    QString title;
-    QString subtitle;
-    BadgeState badge = BadgeState::None;
-    QString badgeText; // For BadgeState::Percent.
-    bool unavailable = false; // Offline and not downloaded: drawn in Secondary.
-};
-
 // Shared base: theme copy, press tracking, partial refresh on press.
 class KitWidget : public QWidget
 {

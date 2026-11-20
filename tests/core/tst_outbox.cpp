@@ -1,7 +1,8 @@
 // Task 10: the outbox. Acceptance: "Retried uploads never produce duplicate
-// sessions (same UUID)", "Outbox survives a simulated crash mid-batch with
-// nothing lost". SPEC: On-device data model ("Tables": outbox); Sync engine
-// ("Order of a full sync", "Networking": backoff).
+// sessions (same UUID)" (reading now goes by page events and the watermark),
+// "Outbox survives a simulated crash mid-batch with nothing lost". SPEC:
+// On-device data model ("Tables": outbox); Sync engine ("Order of a full
+// sync", "Conflict rules", "Networking": backoff).
 #include "core_test_util.h"
 
 #include "smalt/ledger.h"
@@ -51,12 +52,38 @@ class TstOutbox : public QObject
     std::unique_ptr<Ledger> m_ledger;
     std::unique_ptr<Outbox> m_outbox;
 
-    QString addSession(const QString &book, int minute)
+    // A finished session of `pages` page events of 30 s on `book`.
+    QString readBook(const QString &book, const QDateTime &start, int pages)
     {
-        SessionRecord r = makeSession(book, kNow.addSecs(-86400 + minute * 60), 60);
-        if (!m_ledger->appendSession(&r).ok())
+        SessionRecord r;
+        r.contentId = book;
+        r.startUtc = start;
+        if (!m_ledger->beginSession(&r).ok())
+            return QString();
+        for (int i = 0; i < pages; ++i) {
+            PageEventRecord e;
+            e.sessionUuid = r.uuid;
+            e.contentId = book;
+            e.page = i;
+            e.totalPages = 100;
+            e.startUtc = start.addSecs(i * 30);
+            e.durationSeconds = 30;
+            if (!m_ledger->appendPageEvent(e).ok())
+                return QString();
+        }
+        r.endUtc = start.addSecs(pages * 30);
+        r.activeSeconds = pages * 30;
+        if (!m_ledger->finishSession(r).ok())
             return QString();
         return r.uuid;
+    }
+
+    void mapBook(const QString &book, qint64 bookId)
+    {
+        BookMapEntry e;
+        e.contentId = book;
+        e.bookId = bookId;
+        QVERIFY(m_ledger->putBookMap(e).ok());
     }
 
 private slots:
@@ -84,7 +111,7 @@ private slots:
         QCOMPARE(kMinSessionSeconds, 10);
         QCOMPARE(kOutboxBatchSize, 20);
         QCOMPARE(kOutboxMaxBackoffSeconds, 6 * 3600);
-        QVERIFY(int(OutboxKind::Session) < int(OutboxKind::Position));
+        QCOMPARE(int(OutboxKind::Position), 1); // 0 was Session in schema version 1.
         QVERIFY(int(OutboxKind::Position) < int(OutboxKind::Annotation));
         QVERIFY(int(OutboxKind::Annotation) < int(OutboxKind::Status));
     }
@@ -95,18 +122,19 @@ private slots:
         QVERIFY(m_outbox->enqueue(OutboxKind::Status, "st-1", "b1", "{\"s\":1}").ok());
         QVERIFY(m_outbox->enqueue(OutboxKind::Annotation, "an-1", "b1", "{}").ok());
         QVERIFY(m_outbox->enqueue(OutboxKind::Position, "pos-1", "b1", "{}").ok());
-        QStringList sessions;
-        for (int i = 0; i < 25; ++i) {
-            sessions << QStringLiteral("se-%1").arg(i, 2, 10, QLatin1Char('0'));
-            QVERIFY(m_outbox->enqueue(OutboxKind::Session, sessions.last(), "b1", "{}").ok());
+        QStringList positions;
+        positions << "pos-1";
+        for (int i = 0; i < 24; ++i) {
+            positions << QStringLiteral("pos-x%1").arg(i, 2, 10, QLatin1Char('0'));
+            QVERIFY(m_outbox->enqueue(OutboxKind::Position, positions.last(), "b1", "{}").ok());
         }
-        QCOMPARE(m_outbox->pendingCount(), 28);
+        QCOMPARE(m_outbox->pendingCount(), 27);
 
         QVector<OutboxItem> batch = m_outbox->nextBatch(kNow);
         QCOMPARE(batch.size(), kOutboxBatchSize);
-        QCOMPARE(uuidsOf(batch), sessions.mid(0, 20));
+        QCOMPARE(uuidsOf(batch), positions.mid(0, 20));
         for (const OutboxItem &item : batch) {
-            QCOMPARE(item.kind, OutboxKind::Session);
+            QCOMPARE(item.kind, OutboxKind::Position);
             QCOMPARE(item.contentId, QStringLiteral("b1"));
             QCOMPARE(item.payload, QByteArray("{}"));
             QVERIFY(item.createdUtc.isValid());
@@ -115,11 +143,7 @@ private slots:
         QVERIFY(m_outbox->markConfirmed(idsOf(batch)).ok());
 
         batch = m_outbox->nextBatch(kNow);
-        QCOMPARE(uuidsOf(batch), sessions.mid(20));
-        QVERIFY(m_outbox->markConfirmed(idsOf(batch)).ok());
-
-        batch = m_outbox->nextBatch(kNow);
-        QCOMPARE(uuidsOf(batch), QStringList() << "pos-1");
+        QCOMPARE(uuidsOf(batch), positions.mid(20));
         QVERIFY(m_outbox->markConfirmed(idsOf(batch)).ok());
         batch = m_outbox->nextBatch(kNow);
         QCOMPARE(uuidsOf(batch), QStringList() << "an-1");
@@ -135,9 +159,9 @@ private slots:
 
     void maxAndBookFilter()
     {
-        QVERIFY(m_outbox->enqueue(OutboxKind::Session, "a", "b1", "{}").ok());
-        QVERIFY(m_outbox->enqueue(OutboxKind::Session, "b", "b2", "{}").ok());
-        QVERIFY(m_outbox->enqueue(OutboxKind::Position, "c", "b2", "{}").ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Position, "a", "b1", "{}").ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Position, "b", "b2", "{}").ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Annotation, "c", "b2", "{}").ok());
         QCOMPARE(uuidsOf(m_outbox->nextBatch(kNow, 1)), QStringList() << "a");
         QCOMPARE(uuidsOf(m_outbox->nextBatch(kNow, kOutboxBatchSize, "b2")), QStringList() << "b");
         QVERIFY(m_outbox->nextBatch(kNow, 0).isEmpty());
@@ -147,10 +171,9 @@ private slots:
     void reEnqueueReplacesPayload()
     {
         QVERIFY(m_outbox->enqueue(OutboxKind::Position, "pos-b1", "b1", "{\"p\":10}").ok());
-        QVERIFY(m_outbox->enqueue(OutboxKind::Session, "x", "b1", "{}").ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Annotation, "x", "b1", "{}").ok());
         QVERIFY(m_outbox->enqueue(OutboxKind::Position, "pos-b1", "b1", "{\"p\":20}").ok());
         QCOMPARE(m_outbox->pendingCount(), 2);
-        QVERIFY(m_outbox->markConfirmed(idsOf(m_outbox->nextBatch(kNow))).ok());
         const QVector<OutboxItem> batch = m_outbox->nextBatch(kNow);
         QCOMPARE(batch.size(), 1);
         QCOMPARE(batch[0].payload, QByteArray("{\"p\":20}"));
@@ -185,7 +208,7 @@ private slots:
 
     void exponentialBackoffCappedAtSixHours()
     {
-        QVERIFY(m_outbox->enqueue(OutboxKind::Session, "s", "b1", "{}").ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Position, "s", "b1", "{}").ok());
         QDateTime now = kNow;
         qint64 previousDelay = 0;
         for (int attempt = 1; attempt <= 16; ++attempt) {
@@ -222,45 +245,106 @@ private slots:
     {
         // Literal interface rule: the lowest kind that has *ready* items.
         // (See the spec question in the task 10 report.)
-        QVERIFY(m_outbox->enqueue(OutboxKind::Session, "s", "b1", "{}").ok());
-        QVERIFY(m_outbox->enqueue(OutboxKind::Position, "p", "b2", "{}").ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Position, "s", "b1", "{}").ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Annotation, "p", "b2", "{}").ok());
         QVERIFY(m_outbox->markFailed(idsOf(m_outbox->nextBatch(kNow)), kNow).ok());
         QCOMPARE(uuidsOf(m_outbox->nextBatch(kNow)), QStringList() << "p");
     }
 
-    void retriedUploadsNeverDuplicateSessions()
+    void retriedUploadsNeverDuplicateReading()
     {
-        const QString uuid = addSession("b1", 0);
+        // Reading goes by page events and the book's watermark: a retried or
+        // partial upload sends the same events again (BookOrbit ignores the
+        // ones it has), and nothing already acknowledged goes twice.
+        mapBook("b1", 1);
+        const QDateTime start = kNow.addSecs(-3600);
+        const QString uuid = readBook("b1", start, 4);
         QVERIFY(!uuid.isEmpty());
-        QVERIFY(m_outbox->enqueue(OutboxKind::Session, uuid, "b1", "{\"try\":1}").ok());
+        QCOMPARE(m_outbox->pendingCount(), 1); // One unconfirmed session.
 
-        // First upload times out.
-        QVector<OutboxItem> batch = m_outbox->nextBatch(kNow);
-        QCOMPARE(uuidsOf(batch), QStringList() << uuid);
-        QVERIFY(m_outbox->markFailed(idsOf(batch), kNow).ok());
+        // First upload times out: the next try reads the same events.
+        BookMapEntry map;
+        QVERIFY(m_ledger->bookMapByContentId("b1", &map).ok());
+        const QVector<PageEventRecord> first = m_ledger->pageEventsAfter("b1", map.statsWatermark);
+        QCOMPARE(first.size(), 4);
+        QCOMPARE(m_ledger->pageEventsAfter("b1", map.statsWatermark).size(), 4);
 
-        // The recorder queues the same session again (book closed twice, a
-        // crash-replayed hook...): still one item, one session.
-        QVERIFY(m_outbox->enqueue(OutboxKind::Session, uuid, "b1", "{\"try\":2}").ok());
+        // The recorder replays the same events (crash-replayed hook): refused.
+        for (const PageEventRecord &e : first)
+            QCOMPARE(m_ledger->appendPageEvent(e).code, StatusCode::InvalidArgument);
+        QCOMPARE(m_ledger->pageEventsAfter("b1", 0).size(), 4);
+
+        // A partial acknowledgement (the server's watermark is the newest
+        // start time in the batch it took): only the rest goes next.
+        const qint64 secondStart = first[1].startUtc.toMSecsSinceEpoch() / 1000;
+        QVERIFY(m_ledger->setStatsWatermark("b1", secondStart).ok());
+        QCOMPARE(m_ledger->pageEventsAfter("b1", secondStart).size(), 2);
         QCOMPARE(m_outbox->pendingCount(), 1);
-        SessionRecord again = makeSession("b1", kNow.addSecs(-86400), 60);
-        again.uuid = uuid;
-        QCOMPARE(m_ledger->appendSession(&again).code, StatusCode::InvalidArgument);
-        QCOMPARE(m_ledger->sessionsForBook("b1").size(), 1);
 
-        // Retry after the backoff: same UUID, same row.
-        batch = m_outbox->nextBatch(kNow.addSecs(kOutboxMaxBackoffSeconds));
-        QCOMPARE(batch.size(), 1);
-        QCOMPARE(batch[0].entityUuid, uuid);
-        QCOMPARE(batch[0].attempts, 1);
-        QVERIFY(m_outbox->markConfirmed(idsOf(batch)).ok());
-        QCOMPARE(m_outbox->pendingCount(), 0);
-
-        // Once the server has it, it can't be queued again.
-        QCOMPARE(m_outbox->enqueue(OutboxKind::Session, uuid, "b1", "{}").code,
-                 StatusCode::InvalidArgument);
+        // Everything acknowledged: nothing left, the session confirmed, one row.
+        const qint64 last = first.last().startUtc.toMSecsSinceEpoch() / 1000;
+        QVERIFY(m_ledger->setStatsWatermark("b1", last).ok());
+        QVERIFY(m_ledger->pageEventsAfter("b1", last).isEmpty());
+        QVERIFY(m_ledger->booksWithPendingPageEvents().isEmpty());
         QCOMPARE(m_outbox->pendingCount(), 0);
         QCOMPARE(m_ledger->sessionsForBook("b1").size(), 1);
+        SessionRecord got;
+        QVERIFY(m_ledger->session(uuid, &got).ok());
+        QVERIFY(got.confirmed);
+    }
+
+    void positionHeldWhileItsBookHasPendingPageEvents()
+    {
+        mapBook("b1", 1);
+        mapBook("b2", 2);
+        const QString read = readBook("b1", kNow.addSecs(-3600), 3);
+        QVERIFY(!read.isEmpty());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Position, "pos-b1", "b1", "{}").ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Position, "pos-b2", "b2", "{}").ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Annotation, "an-b1", "b1", "{}").ok());
+        QCOMPARE(m_outbox->pendingCount(), 4); // Three items and one unconfirmed session.
+
+        // b1 has unsent reading: its position waits; b2's goes.
+        QCOMPARE(uuidsOf(m_outbox->nextBatch(kNow)), QStringList() << "pos-b2");
+        // For b1 alone, the next kind comes out instead (highlights don't wait).
+        QCOMPARE(uuidsOf(m_outbox->nextBatch(kNow, kOutboxBatchSize, "b1")),
+                 QStringList() << "an-b1");
+
+        // Part of b1's events acknowledged: still held.
+        const QVector<PageEventRecord> events = m_ledger->pageEventsAfter("b1", 0);
+        QCOMPARE(events.size(), 3);
+        QVERIFY(m_ledger->setStatsWatermark("b1", events[1].startUtc.toMSecsSinceEpoch() / 1000)
+                        .ok());
+        QVERIFY(!uuidsOf(m_outbox->nextBatch(kNow)).contains("pos-b1"));
+
+        // The watermark passes them all: the position is released, oldest first.
+        QVERIFY(m_ledger->setStatsWatermark("b1", events[2].startUtc.toMSecsSinceEpoch() / 1000)
+                        .ok());
+        QCOMPARE(uuidsOf(m_outbox->nextBatch(kNow)), QStringList() << "pos-b1" << "pos-b2");
+        QCOMPARE(m_outbox->pendingCount(), 3);
+
+        // New reading in b1 holds it again; a dropped session never does.
+        const QString more = readBook("b1", kNow.addSecs(-600), 1);
+        QVERIFY(!more.isEmpty());
+        QCOMPARE(uuidsOf(m_outbox->nextBatch(kNow)), QStringList() << "pos-b2");
+        QVERIFY(m_ledger->setStatsWatermark("b1", (kNow.toMSecsSinceEpoch() / 1000) - 600).ok());
+        SessionRecord shortOne;
+        shortOne.contentId = "b1";
+        shortOne.startUtc = kNow.addSecs(-60);
+        QVERIFY(m_ledger->beginSession(&shortOne).ok());
+        PageEventRecord e;
+        e.sessionUuid = shortOne.uuid;
+        e.contentId = "b1";
+        e.page = 50;
+        e.startUtc = shortOne.startUtc;
+        e.durationSeconds = 4;
+        QVERIFY(m_ledger->appendPageEvent(e).ok());
+        QCOMPARE(uuidsOf(m_outbox->nextBatch(kNow)), QStringList() << "pos-b2"); // Open: held.
+        shortOne.endUtc = shortOne.startUtc.addSecs(4);
+        shortOne.activeSeconds = 4;
+        QVERIFY(m_ledger->finishSession(shortOne).ok()); // Dropped.
+        QCOMPARE(uuidsOf(m_outbox->nextBatch(kNow)), QStringList() << "pos-b1" << "pos-b2");
+        QCOMPARE(m_outbox->pendingCount(), 3);
     }
 
     void confirmedTombstoneIsRemoved()
@@ -347,14 +431,16 @@ private slots:
 
     void rejectsBadInputAndClosedLedger()
     {
-        QCOMPARE(m_outbox->enqueue(OutboxKind::Session, QString(), "b1", "{}").code,
+        QCOMPARE(m_outbox->enqueue(OutboxKind::Position, QString(), "b1", "{}").code,
                  StatusCode::InvalidArgument);
+        QCOMPARE(m_outbox->enqueue(OutboxKind(0), "x", "b1", "{}").code,
+                 StatusCode::InvalidArgument); // The v1 Session kind.
         QCOMPARE(m_outbox->enqueue(OutboxKind(9), "x", "b1", "{}").code,
                  StatusCode::InvalidArgument);
-        QVERIFY(m_outbox->enqueue(OutboxKind::Session, "x", "b1", "{}").ok());
+        QVERIFY(m_outbox->enqueue(OutboxKind::Position, "x", "b1", "{}").ok());
 
         m_ledger->close();
-        QCOMPARE(m_outbox->enqueue(OutboxKind::Session, "y", "b1", "{}").code, StatusCode::Busy);
+        QCOMPARE(m_outbox->enqueue(OutboxKind::Position, "y", "b1", "{}").code, StatusCode::Busy);
         QVERIFY(m_outbox->nextBatch(kNow).isEmpty());
         QCOMPARE(m_outbox->markConfirmed(QVector<qint64>() << 1).code, StatusCode::Busy);
         QCOMPARE(m_outbox->markFailed(QVector<qint64>() << 1, kNow).code, StatusCode::Busy);
@@ -389,7 +475,7 @@ private slots:
                     for (int i = 0; i < kItems && ok; ++i) {
                         SessionRecord r = makeSession("b1", kNow.addSecs(-86400 + i * 120), 60);
                         ok = ledger->appendSession(&r).ok()
-                                && outbox->enqueue(OutboxKind::Session, r.uuid, "b1", bigPayload)
+                                && outbox->enqueue(OutboxKind::Status, r.uuid, "b1", bigPayload)
                                            .ok();
                     }
                     // First batch confirmed, second handed out, then the

@@ -1,7 +1,4 @@
-// KitFactory: the ComponentFactory from include/smalt/ui_kit.h plus the
-// components that interface does not list yet (see the task 13 report for the
-// proposed header change). `createComponentFactory()` returns a KitFactory, so
-// screens can `dynamic_cast<kit::KitFactory *>` until the interface grows.
+// KitFactory: the ComponentFactory from include/smalt/ui_kit.h (the interface lists every kit component).
 //
 // Signals (connect with the string-based SIGNAL/SLOT syntax; the factory
 // returns plain QWidget pointers):
@@ -52,14 +49,13 @@ public:
     QWidget *banner(const QString &text, const QString &action, QWidget *parent) override;
     QWidget *dialog(const QString &text, const QStringList &actions, QWidget *parent) override;
 
-    // Not in the interface yet.
-    QWidget *cover(const CoverSpec &spec, double widthMm, QWidget *parent);
-    QWidget *coverRow(const QList<CoverSpec> &covers, QWidget *parent);
-    QWidget *listRow(const ListRowSpec &spec, QWidget *parent);
-    QWidget *downloadBadge(BadgeState state, const QString &text, QWidget *parent);
-    QWidget *segmentedProgress(int total, int done, QWidget *parent);
-    QWidget *coverStack(const CoverSpec &front, QWidget *parent);
-    QWidget *letterGrid(QWidget *parent);
+    QWidget *cover(const CoverSpec &spec, double widthMm, QWidget *parent) override;
+    QWidget *coverRow(const QList<CoverSpec> &covers, QWidget *parent) override;
+    QWidget *listRow(const ListRowSpec &spec, QWidget *parent) override;
+    QWidget *downloadBadge(BadgeState state, const QString &text, QWidget *parent) override;
+    QWidget *segmentedProgress(int total, int done, QWidget *parent) override;
+    QWidget *coverStack(const CoverSpec &front, QWidget *parent) override;
+    QWidget *letterGrid(QWidget *parent) override;
 
 private:
     Theme theme_;

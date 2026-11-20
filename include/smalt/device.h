@@ -25,9 +25,10 @@ struct DeviceProfile
     int ppi = 300;
     bool colour = true;
     bool pageTurnButtons = false;
-    int tabs = 4; // Home, Library, Series, More; Libra adds Shelves.
+    int tabs = 5; // Home, Library, Series, Stats, More on every device; Shelves under More.
     int readingNowCovers = 3; // "3 covers on the Claras, 4 on the Libra"
     int upNextRows = 1; // "1 row on the Claras, 2 on the Libra"
+    int heatmapWeeks = 26; // Stats heatmap: 26 weeks on the Claras, 52 on the Libra.
 };
 
 inline DeviceProfile deviceProfile(DeviceModel model)
@@ -46,9 +47,9 @@ inline DeviceProfile deviceProfile(DeviceModel model)
         p.widthPx = 1264;
         p.heightPx = 1680;
         p.pageTurnButtons = true;
-        p.tabs = 5;
         p.readingNowCovers = 4;
         p.upNextRows = 2;
+        p.heatmapWeeks = 52;
         break;
     case DeviceModel::ClaraColour:
     case DeviceModel::Unknown:

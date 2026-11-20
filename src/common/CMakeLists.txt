@@ -5,9 +5,11 @@ smalt_add_module(smalt_common
     SOURCES
         log.cpp
         paths.cpp
+        settings.cpp
         # QObject interfaces: their meta-objects are compiled here, once.
         "${PROJECT_SOURCE_DIR}/include/smalt/nickel.h"
         "${PROJECT_SOURCE_DIR}/include/smalt/sync.h"
+        "${PROJECT_SOURCE_DIR}/include/smalt/settings.h"
     DEPS Qt5::Core)
 
 target_include_directories(smalt_common PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/generated")

@@ -8,6 +8,8 @@
 #include "smalt/device.h"
 
 #include <QColor>
+#include <QList>
+#include <QPixmap>
 #include <QString>
 #include <QStringList>
 
@@ -28,6 +30,10 @@ constexpr unsigned int Teal = 0x3E6F6A; // Download button, progress bars, activ
 constexpr unsigned int TealTint = 0xDCE8E5; // Background of small download badges
 constexpr unsigned int TealDark = 0x2F5853; // Icon on the teal tint
 constexpr unsigned int MonoTint = 0xE6E6E6; // Clara BW: replaces Teal tint
+// Stats heatmap steps, paper to teal (SPEC, Stats "Rules"): days with 0, under
+// 15, under 30, under 60, and 60 or more minutes.
+constexpr unsigned int HeatmapColour[5] = { 0xECECEC, 0xC9DCD8, 0x93B6B0, 0x5E8C86, 0x3E6F6A };
+constexpr unsigned int HeatmapMono[5] = { 0xECECEC, 0xC4C4C4, 0x8E8E8E, 0x5A5A5A, 0x111111 };
 } // namespace token
 
 // The palette a screen paints with. Teal means "getting and progress" only;
@@ -41,6 +47,7 @@ struct Palette
     QColor accent; // Teal, or Ink on Clara BW.
     QColor accentTint; // Teal tint, or light grey on Clara BW.
     QColor accentDark; // Teal dark, or Ink on Clara BW.
+    QColor heatmap[5]; // Stats heatmap steps (token::HeatmapColour or HeatmapMono).
     bool colourCovers = true;
 };
 
@@ -57,11 +64,15 @@ inline Palette paletteFor(DeviceModel model)
         p.accent = QColor(QRgb(token::Ink));
         p.accentTint = QColor(QRgb(token::MonoTint));
         p.accentDark = QColor(QRgb(token::Ink));
+        for (int i = 0; i < 5; ++i)
+            p.heatmap[i] = QColor(QRgb(token::HeatmapMono[i]));
         p.colourCovers = false;
     } else {
         p.accent = QColor(QRgb(token::Teal));
         p.accentTint = QColor(QRgb(token::TealTint));
         p.accentDark = QColor(QRgb(token::TealDark));
+        for (int i = 0; i < 5; ++i)
+            p.heatmap[i] = QColor(QRgb(token::HeatmapColour[i]));
     }
     return p;
 }
@@ -95,6 +106,34 @@ public:
     virtual void requestRefresh(QWidget *widget, RefreshKind kind) = 0;
 };
 
+// --- Component data ---
+
+// A book cover in lists, rows and stacks.
+struct CoverSpec
+{
+    QPixmap pixmap; // May be null: a placeholder is drawn.
+    QString title;
+    QString format; // "CBZ", "PDF" for comics and PDFs; empty for books.
+    double progress = -1; // 0..1, or negative for no bar.
+};
+
+enum class BadgeState {
+    Download, // Not on the Kobo: teal tint with a download arrow.
+    OnDevice, // Downloaded: plain check, no colour.
+    Percent, // Downloading: live value as black text ("42%").
+    None,
+};
+
+struct ListRowSpec
+{
+    CoverSpec cover;
+    QString title;
+    QString subtitle;
+    BadgeState badge = BadgeState::None;
+    QString badgeText; // For BadgeState::Percent.
+    bool unavailable = false; // Offline and not downloaded: drawn in Secondary.
+};
+
 // --- Components ---
 // The factory builds every component the screens use, styled for one device
 // profile and palette. No animations. Returned widgets are owned by `parent`.
@@ -122,6 +161,13 @@ public:
     virtual QWidget *banner(const QString &text, const QString &action, QWidget *parent) = 0;
     // Dialog with a 2 px black border over a dimmed page, no shadow.
     virtual QWidget *dialog(const QString &text, const QStringList &actions, QWidget *parent) = 0;
+    virtual QWidget *cover(const CoverSpec &spec, double widthMm, QWidget *parent) = 0;
+    virtual QWidget *coverRow(const QList<CoverSpec> &covers, QWidget *parent) = 0;
+    virtual QWidget *listRow(const ListRowSpec &spec, QWidget *parent) = 0;
+    virtual QWidget *downloadBadge(BadgeState state, const QString &text, QWidget *parent) = 0;
+    virtual QWidget *segmentedProgress(int total, int done, QWidget *parent) = 0; // Series bar.
+    virtual QWidget *coverStack(const CoverSpec &front, QWidget *parent) = 0;
+    virtual QWidget *letterGrid(QWidget *parent) = 0; // Jump-to-letter: A-Z and #.
 };
 
 // Defined by task 13 (src/ui/kit/). `refresh` may be null (no-op) and is not owned.
