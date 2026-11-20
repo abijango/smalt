@@ -112,11 +112,17 @@ signals:
 class Ledger;
 class Outbox;
 class NickelBridge;
+class Recorder;
 class Safety;
+class SettingsStore;
 
-// Wires the engine to its collaborators; none are owned. Defined by task 21
-// (src/sync/).
+// Wires the engine to its collaborators; none are owned. The engine starts
+// BeforeSleep from Recorder::readyForSleep() and BookClosed from
+// Recorder::bookClosedRecorded() (see recorder.h), WhileReading from its own
+// timer while Recorder::openContentId() is set, and reads its limits and
+// switches from `settings`. Defined by task 21 (src/sync/).
 SyncEngine *createSyncEngine(Ledger *ledger, Outbox *outbox, BookOrbitClient *client,
-                             NickelBridge *nickel, Safety *safety, QObject *parent = nullptr);
+                             NickelBridge *nickel, Safety *safety, Recorder *recorder,
+                             SettingsStore *settings, QObject *parent = nullptr);
 
 } // namespace smalt

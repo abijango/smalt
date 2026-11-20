@@ -1,9 +1,10 @@
 // The NickelHook entry point for libsmalt.so.
 //
 // Scaffold version (task 00): the mod loads, writes one startup line to
-// .adds/bookorbit/logs/smalt.log, and does nothing else. Tasks 20, 21, 30 and
-// 31 add hooks and dlsyms to the tables below; task 12 adds the startup
-// safety checks to smalt_init().
+// .adds/bookorbit/logs/smalt.log, and does nothing else. The hook and dlsym
+// tables below are spliced from each task's hooks_*.h (task 20: recorder,
+// task 21: Wi-Fi and sleep hold), so tasks never edit this file in parallel.
+// The orchestrator wires the modules together here at integration.
 //
 // Uninstall (SPEC, Crash safety, "Uninstall"): NickelHook removes the mod
 // when .adds/bookorbit/uninstall is missing at startup (uninstall_xflag).
@@ -18,6 +19,9 @@
 #include "smalt/log.h"
 #include "smalt/paths.h"
 #include "smalt/version.h"
+
+#include "hooks_recorder.h"
+#include "hooks_wifi.h"
 
 #include <QString>
 
@@ -53,13 +57,19 @@ struct nh_info SmaltInfo = {
     .failsafe_delay = 10,
 };
 
+// clang-format off
 struct nh_hook SmaltHook[] = {
+    SMALT_RECORDER_HOOKS
+    SMALT_WIFI_HOOKS
     { nullptr, nullptr, nullptr, nullptr, nullptr, false },
 };
 
 struct nh_dlsym SmaltDlsym[] = {
+    SMALT_RECORDER_DLSYMS
+    SMALT_WIFI_DLSYMS
     { nullptr, nullptr, nullptr, false },
 };
+// clang-format on
 
 } // namespace
 
