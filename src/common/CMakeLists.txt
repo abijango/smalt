@@ -10,6 +10,7 @@ smalt_add_module(smalt_common
         "${PROJECT_SOURCE_DIR}/include/smalt/nickel.h"
         "${PROJECT_SOURCE_DIR}/include/smalt/sync.h"
         "${PROJECT_SOURCE_DIR}/include/smalt/settings.h"
+        "${PROJECT_SOURCE_DIR}/include/smalt/recorder.h"
     DEPS Qt5::Core)
 
 target_include_directories(smalt_common PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/generated")
