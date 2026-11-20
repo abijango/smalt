@@ -1,7 +1,7 @@
 // Internal entry points of src/safety/ (task 12): the same objects the public
 // factories in include/smalt/safety.h make, with the clock and the installed
-// library's identity injectable for tests, plus helpers that the public header
-// doesn't expose yet (proposed in the task 12 report).
+// library's identity injectable for tests, plus helpers the tests check
+// directly.
 #pragma once
 
 #include "clock.h"
@@ -39,14 +39,6 @@ int effectiveWatchdogLimit(int requestedMs);
 
 // The text of RECOVERY.txt. `when` is the boot that triggered recovery.
 QString recoveryNoticeText(const QDateTime &when);
-
-// Cleanup for the plugin's NickelHook `uninstall` callback, which runs after
-// NickelHook has already removed libsmalt.so (because `uninstall` was
-// deleted). Removes only Smalt's transient state, so a later reinstall starts
-// clean: the startup marker and the `disabled` switch. Everything else stays:
-// the ledger and any renamed ledgers, backup/, logs/, config.ini, the other
-// switches and RECOVERY.txt (CLAUDE.md hard rule 3). Missing files are fine.
-Status cleanupAfterUninstall(const Paths &paths);
 
 } // namespace safety
 } // namespace smalt

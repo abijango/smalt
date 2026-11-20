@@ -36,13 +36,11 @@ int place(QWidget *w, int x, int y, int width = 0)
     return y + h;
 }
 
-QStringList tabNames(const DeviceProfile &p)
+QStringList tabNames(const DeviceProfile &)
 {
     QStringList tabs;
-    tabs << QStringLiteral("Home") << QStringLiteral("Library") << QStringLiteral("Series");
-    if (p.tabs >= 5)
-        tabs << QStringLiteral("Shelves");
-    tabs << QStringLiteral("More");
+    tabs << QStringLiteral("Home") << QStringLiteral("Library") << QStringLiteral("Series")
+         << QStringLiteral("Stats") << QStringLiteral("More");
     return tabs;
 }
 

@@ -26,6 +26,10 @@ public:
         const int id = nextId();
         QTimer *timer = new QTimer;
         timer->setSingleShot(true);
+        // Never early: the default CoarseTimer may fire up to 5% early, which
+        // would cut the 30 s readiness timeout and the wait for Nickel short.
+        // These are a handful of one-shot timers, so precision costs nothing.
+        timer->setTimerType(Qt::PreciseTimer);
         m_timers.insert(id, timer);
         QObject::connect(timer, &QTimer::timeout, [this, id, fn]() {
             QTimer *fired = m_timers.take(id);

@@ -155,7 +155,8 @@ class TstClient : public QObject
         });
         add("exchangeAnnotations", "/plugin/annotations/exchange",
             [hash](QtBookOrbitClient &c, Sink s) {
-                return c.exchangeAnnotations(hash, { sampleAnnotation() }, sink<QJsonObject>(s));
+                return c.exchangeAnnotations(hash, { sampleAnnotation() }, QJsonArray(), false,
+                                             QString(), sink<QJsonObject>(s));
             });
         add("ackAnnotations", "/plugin/annotations/exchange-ack",
             [hash](QtBookOrbitClient &c, Sink s) {
@@ -637,7 +638,8 @@ private slots:
     void annotationsExchangeAndAck()
     {
         const auto r = await<QJsonObject>([&](BookOrbitClient::Callback<QJsonObject> cb) {
-            m_client->exchangeAnnotations(m_hash, { sampleAnnotation() }, cb);
+            m_client->exchangeAnnotations(m_hash, { sampleAnnotation() }, QJsonArray(), false,
+                                          QString(), cb);
         });
         QVERIFY2(r.result.ok(), qPrintable(r.result.message));
         const QJsonObject res = r.value.value("results").toArray().at(0).toObject();
@@ -663,7 +665,7 @@ private slots:
         key.insert("k", QString(32, QLatin1Char('c')));
         key.insert("dt", "2026-11-16 10:00:00");
         const auto ex = await<QJsonObject>([&](BookOrbitClient::Callback<QJsonObject> cb) {
-            m_client->exchangeAnnotationsEx(m_hash, QJsonArray(), { key }, true, "known", cb);
+            m_client->exchangeAnnotations(m_hash, QJsonArray(), { key }, true, "known", cb);
         });
         QVERIFY2(ex.result.ok(), qPrintable(ex.result.message));
         const QJsonObject book2 = m_server.requestsTo("/plugin/annotations/exchange")
@@ -707,11 +709,13 @@ private slots:
         for (int i = 0; i < 51; ++i)
             many.append(sampleAnnotation());
         QCOMPARE(await<QJsonObject>([&](BookOrbitClient::Callback<QJsonObject> cb) {
-                     m_client->exchangeAnnotations(m_hash, many, cb);
+                     m_client->exchangeAnnotations(m_hash, many, QJsonArray(), false, QString(),
+                                                   cb);
                  }).result.error,
                  ErrorKind::ClientError);
         QCOMPARE(await<QJsonObject>([&](BookOrbitClient::Callback<QJsonObject> cb) {
-                     m_client->exchangeAnnotations(QStringLiteral("x"), QJsonArray(), cb);
+                     m_client->exchangeAnnotations(QStringLiteral("x"), QJsonArray(), QJsonArray(),
+                                                   false, QString(), cb);
                  }).result.error,
                  ErrorKind::ClientError);
     }
@@ -1183,6 +1187,60 @@ private slots:
         QCOMPARE(r.result.httpStatus, 0);
     }
 
+    void positionCompatibleIsTrueUnlessTheServerSaysFalse()
+    {
+        QJsonObject rule = MockServer::rule("/plugin/match-check");
+        rule.insert(
+                "body",
+                QJsonObject{ { "libraryVersion", "v1" },
+                             { "matches",
+                               QJsonArray{ QJsonObject{ { "hash", m_hash },
+                                                        { "bookId", 1 },
+                                                        { "bookFileId", 101 },
+                                                        { "positionCompatible", false } },
+                                           QJsonObject{ { "hash", QString(32, QLatin1Char('b')) },
+                                                        { "bookId", 2 },
+                                                        { "bookFileId", 102 } },
+                                           QJsonObject{ { "hash", QString(32, QLatin1Char('c')) },
+                                                        { "bookId", 3 },
+                                                        { "bookFileId", 103 },
+                                                        { "positionCompatible", true } } } } });
+        m_server.setRules({ rule });
+        makeClient();
+        MatchQuery a, b, c;
+        a.partialMd5 = m_hash;
+        b.partialMd5 = QString(32, QLatin1Char('b'));
+        c.partialMd5 = QString(32, QLatin1Char('c'));
+        const auto r = await<QVector<MatchResult>>(
+                [&](BookOrbitClient::Callback<QVector<MatchResult>> cb) {
+                    m_client->matchCheck({ a, b, c }, cb);
+                });
+        QVERIFY2(r.result.ok(), qPrintable(r.result.message));
+        QCOMPARE(r.value.size(), 3);
+        QVERIFY(!r.value[0].positionCompatible);
+        QVERIFY(r.value[1].positionCompatible); // absent means true
+        QVERIFY(r.value[2].positionCompatible);
+        QCOMPARE(m_client->libraryVersion(), QStringLiteral("v1"));
+    }
+
+    void aNumericLibraryVersionIsKept()
+    {
+        QJsonObject rule = MockServer::rule("/plugin/match-check");
+        rule.insert(
+                "body",
+                QJsonObject{ { "libraryVersion", 1731950000123.0 }, { "matches", QJsonArray() } });
+        m_server.setRules({ rule });
+        makeClient();
+        MatchQuery q;
+        q.partialMd5 = m_hash;
+        const auto r = await<QVector<MatchResult>>(
+                [&](BookOrbitClient::Callback<QVector<MatchResult>> cb) {
+                    m_client->matchCheck({ q }, cb);
+                });
+        QVERIFY2(r.result.ok(), qPrintable(r.result.message));
+        QCOMPARE(m_client->libraryVersion(), QStringLiteral("1731950000123"));
+    }
+
     void unresolvableHostIsOffline()
     {
         ClientConfig c = config();
@@ -1377,7 +1435,7 @@ private slots:
         m_client.reset(new QtBookOrbitClient(c));
         const auto r =
                 await<bool>([&](BookOrbitClient::Callback<bool> cb) { m_client->checkAuth(cb); });
-        QCOMPARE(r.result.error, ErrorKind::Offline);
+        QCOMPARE(r.result.error, ErrorKind::TlsError);
         QVERIFY2(r.result.message.contains("CA bundle"), qPrintable(r.result.message));
         QCOMPARE(m_calls, 1);
 

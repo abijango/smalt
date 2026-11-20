@@ -25,6 +25,7 @@ Test control (not part of the protocol, never behind auth):
 A rule changes how matching requests are answered:
 
     {"path": "/plugin/page-stats", "method": "POST",   # path is after /api/v1/koreader
+     "body_contains": "abc123",                          # only requests whose body text contains this
      "skip": 0, "times": 1,                              # let `skip` through, then apply `times` times (null = always)
      "delay_ms": 0,                                      # sleep before answering
      "status": 500, "body": {...} | "raw_body": "...",   # answer with this instead
@@ -258,11 +259,13 @@ def create_app(state: Optional[State] = None) -> FastAPI:
 
     # --- Rules and request log ------------------------------------------------
 
-    def find_rule(method: str, path: str):
+    def find_rule(method: str, path: str, raw: bytes = b""):
         for rule in st.rules:
             if rule.get("method") and rule["method"].upper() != method:
                 continue
             if rule.get("path") != path:
+                continue
+            if rule.get("body_contains") and rule["body_contains"].encode() not in raw:
                 continue
             if rule.get("_seen", 0) < rule.get("skip", 0):
                 rule["_seen"] = rule.get("_seen", 0) + 1
@@ -313,7 +316,7 @@ def create_app(state: Optional[State] = None) -> FastAPI:
             "time": time.time(),
         }
         st.requests.append(entry)
-        rule = find_rule(request.method, short)
+        rule = find_rule(request.method, short, raw)
         entry["rule"] = bool(rule)
         if rule and not rule.get("after_processing"):
             if rule.get("delay_ms"):

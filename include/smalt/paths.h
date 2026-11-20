@@ -30,6 +30,7 @@ public:
 
     // --- Configuration (Sync engine, "Networking") ---
     QString configIni() const; // .adds/bookorbit/config.ini (credentials; never in the repo)
+    QString settingsIni() const; // .adds/bookorbit/settings.ini (everything but the login)
     QString configIniExample() const; // .adds/bookorbit/config.ini.example (shipped default)
     QString caBundle() const; // .adds/bookorbit/certs/ca-bundle.pem (shipped CA certificates)
 

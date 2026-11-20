@@ -9,5 +9,5 @@ smalt_add_module(smalt_bookorbit
     DEPS Qt5::Network)
 
 # Other modules and the tests reach this module's own headers as
-# "bookorbit/<header>.h" (client_config.h, page_stats_uploader.h, ...).
+# "bookorbit/<header>.h" (client_config.h, qt_bookorbit_client.h, ...).
 target_include_directories(smalt_bookorbit PUBLIC "${PROJECT_SOURCE_DIR}/src")

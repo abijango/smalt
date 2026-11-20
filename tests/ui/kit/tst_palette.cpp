@@ -42,6 +42,29 @@ private slots:
         QCOMPARE(QColor(QRgb(token::TealDark)).name(), QStringLiteral("#2f5853"));
     }
 
+    void heatmapStepsMatchTheSpec()
+    {
+        const char *colourSteps[5] = { "#ececec", "#c9dcd8", "#93b6b0", "#5e8c86", "#3e6f6a" };
+        const char *monoSteps[5] = { "#ececec", "#c4c4c4", "#8e8e8e", "#5a5a5a", "#111111" };
+        for (int i = 0; i < allModels().size(); ++i) {
+            const DeviceModel model = allModels().at(i);
+            const Palette p = paletteFor(model);
+            for (int s = 0; s < 5; ++s) {
+                if (model == DeviceModel::ClaraBW) {
+                    QCOMPARE(p.heatmap[s].name(), QString::fromLatin1(monoSteps[s]));
+                    QVERIFY2(isGrey(p.heatmap[s].rgb()), "Clara BW heatmap must have no colour");
+                } else {
+                    QCOMPARE(p.heatmap[s].name(), QString::fromLatin1(colourSteps[s]));
+                }
+            }
+            // Darker with every step (paper to teal / ink).
+            for (int s = 1; s < 5; ++s)
+                QVERIFY(p.heatmap[s].lightness() < p.heatmap[s - 1].lightness());
+        }
+        QCOMPARE(paletteFor(DeviceModel::Unknown).heatmap[4], QColor(QRgb(token::Teal)));
+        QCOMPARE(paletteFor(DeviceModel::ClaraBW).heatmap[4], QColor(QRgb(token::Ink)));
+    }
+
     void monochromeMappingReplacesEveryTealToken()
     {
         const Palette colour = paletteFor(DeviceModel::ClaraColour);
