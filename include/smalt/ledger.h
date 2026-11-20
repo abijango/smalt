@@ -201,10 +201,16 @@ public:
     virtual ~Ledger() = default;
 
     // --- Lifecycle (On-device data model, "Where it lives") ---
-    virtual Status open() = 0; // Opens, migrates and integrity-checks.
+    // Opens, migrates and checks the file. Runs on Nickel's UI thread (at boot
+    // and after every USB disconnect), so it uses PRAGMA quick_check, bounded
+    // in time; the full integrity_check runs in backupIfDue() on a worker.
+    virtual Status open() = 0;
     virtual void close() = 0; // Safe to call when closed. Used on USB connect.
     virtual bool isOpen() const = 0;
-    virtual Status backupIfDue(const QDateTime &nowUtc) = 0; // Daily copy, keeps the last 7.
+    // Daily copy, keeps the last 7. Returns at once: the full integrity check
+    // and the copy run on a worker thread with their own connection; a failure
+    // is logged. Never blocks the caller; harmless to call more than once.
+    virtual Status backupIfDue(const QDateTime &nowUtc) = 0;
 
     // --- server row ---
     virtual QString deviceId() = 0; // Stable per Kobo; made on first open.
@@ -267,6 +273,22 @@ public:
     virtual QVector<PageEventRecord> pageEventsInRange(const QDateTime &fromUtc,
                                                        const QDateTime &toUtc,
                                                        QVector<bool> *confirmed = nullptr) = 0;
+
+    // Reading time in quarter-hour buckets (UTC, aligned to :00/:15/:30/:45),
+    // summed in SQL, so a year of reading comes back as a few thousand rows
+    // instead of every page event (Stats: heatmap, minutes per day, hour of
+    // day; any time zone, including :30 and :45 offsets, maps onto them). An
+    // event spanning several buckets is split across them. Dropped sessions
+    // excluded; buckets with no reading omitted; oldest first.
+    struct ReadingBucket
+    {
+        QDateTime startUtc;
+        int seconds = 0; // All reading in the bucket.
+        int unconfirmedSeconds = 0; // Part of it above its book's watermark.
+    };
+
+    virtual QVector<ReadingBucket> readingByQuarterHour(const QDateTime &fromUtc,
+                                                        const QDateTime &toUtc) = 0;
     // A book's page events with a start time after `afterUnixSeconds`, oldest
     // first, at most `limit` (0 = no limit). What still has to be uploaded.
     virtual QVector<PageEventRecord> pageEventsAfter(const QString &contentId,
