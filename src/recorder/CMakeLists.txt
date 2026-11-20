@@ -1,6 +1,8 @@
-# Owned by task 20 (see docs/tasks/). Add sources to SOURCES; the scaffold
-# stub can go once real code is here.
+# Owned by task 20 (docs/tasks/20-recorder.md).
 smalt_add_module(smalt_recorder
     SOURCES
-        recorder_stub.cpp
+        recorder.cpp
+        recorder_clock.cpp
+        recorder_clock.h
+        recorder_internal.h
     DEPS smalt_ledger)

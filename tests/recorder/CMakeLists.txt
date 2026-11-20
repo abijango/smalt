@@ -1,3 +1,3 @@
-# Owned by task 20. Replace the scaffold placeholder with the brief's
-# acceptance tests.
-smalt_add_qtest(recorder.placeholder SOURCES tst_placeholder.cpp DEPS smalt_recorder smalt_test_fakes)
+# Owned by task 20: the brief's acceptance tests (docs/tasks/20-recorder.md).
+smalt_add_qtest(recorder.recorder SOURCES tst_recorder.cpp fake_recorder_clock.h
+    DEPS smalt_recorder smalt_test_fakes)
